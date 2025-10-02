@@ -426,12 +426,26 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
                  );
                }
 
-               // Group by status
-               final priority1 = snapshot.data!.where((p) => (p['pin'] as Pin).status == 'Priority 1').toList();
-               final priority2 = snapshot.data!.where((p) => (p['pin'] as Pin).status == 'Priority 2').toList();
-               final priority3 = snapshot.data!.where((p) => (p['pin'] as Pin).status == 'Priority 3').toList();
-               final completed = snapshot.data!.where((p) => (p['pin'] as Pin).status == 'Completed').toList();
-               final verified = snapshot.data!.where((p) => (p['pin'] as Pin).status == 'Verified').toList();
+               // Group by status and add building-specific pin numbers
+               final allPinsWithNumbers = snapshot.data!.asMap().entries.map((entry) {
+                 final index = entry.key;
+                 final data = entry.value;
+                 final pin = data['pin'] as Pin;
+                 final buildingPinNumber = index + 1; // Building-specific numbering
+                 
+                 return {
+                   'pin': pin,
+                   'planImage': data['planImage'],
+                   'plan': data['plan'],
+                   'buildingPinNumber': buildingPinNumber,
+                 };
+               }).toList();
+
+               final priority1 = allPinsWithNumbers.where((p) => (p['pin'] as Pin).status == 'Priority 1').toList();
+               final priority2 = allPinsWithNumbers.where((p) => (p['pin'] as Pin).status == 'Priority 2').toList();
+               final priority3 = allPinsWithNumbers.where((p) => (p['pin'] as Pin).status == 'Priority 3').toList();
+               final completed = allPinsWithNumbers.where((p) => (p['pin'] as Pin).status == 'Completed').toList();
+               final verified = allPinsWithNumbers.where((p) => (p['pin'] as Pin).status == 'Verified').toList();
 
                return ListView(
                  padding: const EdgeInsets.all(16),
@@ -447,44 +461,51 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
            );
          }
 
-         Future<List<Map<String, dynamic>>> _loadAllPinsForProject() async {
-           // Get all plans for this project
-           final plans = await DatabaseService.instance.query(
-             'plans',
-             where: 'project_id = ?',
-             whereArgs: [widget.projectId],
-           );
+        Future<List<Map<String, dynamic>>> _loadAllPinsForProject() async {
+          // Get all plans for this project
+          final plans = await DatabaseService.instance.query(
+            'plans',
+            where: 'project_id = ?',
+            whereArgs: [widget.projectId],
+          );
 
-           List<Map<String, dynamic>> allPins = [];
+          List<Map<String, dynamic>> allPins = [];
 
-           for (var plan in plans) {
-             // Get all plan images for this plan
-             final planImages = await DatabaseService.instance.query(
-               'plan_images',
-               where: 'plan_id = ?',
-               whereArgs: [plan['id']],
-             );
+          for (var plan in plans) {
+            // Get all plan images for this plan
+            final planImages = await DatabaseService.instance.query(
+              'plan_images',
+              where: 'plan_id = ?',
+              whereArgs: [plan['id']],
+            );
 
-             for (var planImage in planImages) {
-               // Get all pins for this plan image
-               final pins = await DatabaseService.instance.query(
-                 'pins',
-                 where: 'plan_image_id = ?',
-                 whereArgs: [planImage['id']],
-               );
+            for (var planImage in planImages) {
+              // Get all pins for this plan image
+              final pins = await DatabaseService.instance.query(
+                'pins',
+                where: 'plan_image_id = ?',
+                whereArgs: [planImage['id']],
+              );
 
-               for (var pin in pins) {
-                 allPins.add({
-                   'pin': Pin.fromMap(pin),
-                   'planImage': PlanImage.fromMap(planImage),
-                   'plan': Plan.fromMap(plan),
-                 });
-               }
-             }
-           }
+              for (var pin in pins) {
+                allPins.add({
+                  'pin': Pin.fromMap(pin),
+                  'planImage': PlanImage.fromMap(planImage),
+                  'plan': Plan.fromMap(plan),
+                });
+              }
+            }
+          }
 
-           return allPins;
-         }
+          // Sort by creation date to get building-specific numbering (same as plan viewer)
+          allPins.sort((a, b) {
+            final pinA = a['pin'] as Pin;
+            final pinB = b['pin'] as Pin;
+            return pinA.createdAt.compareTo(pinB.createdAt);
+          });
+
+          return allPins;
+        }
 
          Widget _buildPriorityGroup(String title, List<Map<String, dynamic>> pins, Color color) {
            return Column(
@@ -511,6 +532,7 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
                  final pin = data['pin'] as Pin;
                  final planImage = data['planImage'] as PlanImage;
                  final plan = data['plan'] as Plan;
+                 final buildingPinNumber = data['buildingPinNumber'] as int;
 
                  return Card(
                    margin: const EdgeInsets.only(bottom: 8),
@@ -525,6 +547,7 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
                              planImage: planImage,
                              x: pin.x,
                              y: pin.y,
+                             pinNumber: buildingPinNumber,
                            ),
                          ),
                        );
@@ -545,7 +568,7 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
                              ),
                              child: Center(
                                child: Text(
-                                 '${pin.id}',
+                                 '$buildingPinNumber',
                                  style: const TextStyle(
                                    color: Colors.white,
                                    fontSize: 14,
@@ -568,7 +591,7 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
                                  ),
                                  const SizedBox(height: 4),
                                  Text(
-                                   '#${pin.id} | @${planImage.name} | ${plan.jobNumber}',
+                                   '#$buildingPinNumber | @${planImage.name} | ${plan.jobNumber}',
                                    style: TextStyle(
                                      fontSize: 12,
                                      color: Colors.grey[600],

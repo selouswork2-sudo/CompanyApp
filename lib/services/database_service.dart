@@ -19,7 +19,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -70,6 +70,26 @@ CREATE TABLE pin_comments (
   image_path TEXT,
   created_at TEXT NOT NULL,
   FOREIGN KEY (pin_id) REFERENCES pins (id) ON DELETE CASCADE
+)
+''');
+    }
+    if (oldVersion < 6) {
+      // Add timesheets table
+      await db.execute('''
+CREATE TABLE timesheets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  plan_id INTEGER,
+  user_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  notes TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects (id),
+  FOREIGN KEY (plan_id) REFERENCES plans (id)
 )
 ''');
     }
@@ -200,6 +220,25 @@ CREATE TABLE files (
 )
 ''');
 
+    // Timesheets table
+    await db.execute('''
+CREATE TABLE timesheets (
+  id $idType,
+  project_id $intType,
+  plan_id INTEGER,
+  user_id $textType,
+  date TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  notes TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects (id),
+  FOREIGN KEY (plan_id) REFERENCES plans (id)
+)
+''');
+
     // Team members table
     await db.execute('''
 CREATE TABLE team_members (
@@ -238,6 +277,25 @@ CREATE TABLE pin_comments (
   image_path TEXT,
   created_at TEXT NOT NULL,
   FOREIGN KEY (pin_id) REFERENCES pins (id) ON DELETE CASCADE
+)
+''');
+
+    // Timesheets table
+    await db.execute('''
+CREATE TABLE timesheets (
+  id $idType,
+  project_id $intType,
+  plan_id INTEGER,
+  user_id $textType,
+  date TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  notes TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects (id),
+  FOREIGN KEY (plan_id) REFERENCES plans (id)
 )
 ''');
   }

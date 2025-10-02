@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../theme/app_theme.dart';
+import 'timesheet_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -126,9 +127,11 @@ class HomeScreen extends StatelessWidget {
                         subtitle: 'Track hours',
                         color: AppTheme.success,
                         onTap: () {
-                          // TODO: Navigate to timesheet
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('TimeSheet coming soon!')),
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const TimesheetScreen(),
+                            ),
                           );
                         },
                       ),
