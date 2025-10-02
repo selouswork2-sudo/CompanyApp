@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../services/database_service.dart';
 import '../models/project.dart';
+import '../theme/app_theme.dart';
 
 class ProjectsScreen extends StatefulWidget {
   const ProjectsScreen({super.key});
@@ -138,13 +139,25 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         return false;
       },
       child: Scaffold(
-        backgroundColor: Colors.grey[100],
+        backgroundColor: AppTheme.backgroundColor,
+        appBar: AppBar(
+          title: const Text('Projects'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => context.go('/'),
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.add),
+              onPressed: () => _createProject(),
+            ),
+          ],
+        ),
         body: SafeArea(
         child: Column(
           children: [
-            // Top Search Bar
+            // Search Bar
             Container(
-              color: Colors.white,
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [

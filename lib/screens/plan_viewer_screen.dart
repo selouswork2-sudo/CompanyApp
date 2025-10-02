@@ -27,6 +27,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
   bool _moveMode = false;
   bool _deleteMode = false;
   List<Pin> _pins = [];
+  List<Pin> _allBuildingPins = []; // All pins in this building
   Pin? _selectedPinToMove;
   Pin? _draggingPin;
   final TransformationController _transformationController = TransformationController();
@@ -36,6 +37,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
+    _loadPinsForBuilding();
     _loadPins();
   }
 
@@ -57,6 +59,59 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
     });
   }
 
+  Future<void> _loadPinsForBuilding() async {
+    // Get the first plan image's plan_id to find the project_id
+    final planImageId = widget.planImages.first.planId;
+    
+    // Get the plan (job) to find project_id
+    final planMaps = await DatabaseService.instance.query(
+      'plans',
+      where: 'id = ?',
+      whereArgs: [planImageId],
+    );
+    
+    if (planMaps.isEmpty) return;
+    
+    final projectId = planMaps.first['project_id'];
+    
+    // Get all plans (jobs) for this building
+    final allPlansForBuilding = await DatabaseService.instance.query(
+      'plans',
+      where: 'project_id = ?',
+      whereArgs: [projectId],
+    );
+    
+    // Collect all pins from all plan images in this building
+    List<Pin> allPins = [];
+    
+    for (var plan in allPlansForBuilding) {
+      // Get all plan images for this job
+      final planImages = await DatabaseService.instance.query(
+        'plan_images',
+        where: 'plan_id = ?',
+        whereArgs: [plan['id']],
+      );
+      
+      // Get all pins for each plan image
+      for (var planImage in planImages) {
+        final pins = await DatabaseService.instance.query(
+          'pins',
+          where: 'plan_image_id = ?',
+          whereArgs: [planImage['id']],
+        );
+        
+        allPins.addAll(pins.map((e) => Pin.fromMap(e)));
+      }
+    }
+    
+    // Sort by creation date
+    allPins.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    
+    setState(() {
+      _allBuildingPins = allPins;
+    });
+  }
+
   void _onPageChanged(int index) {
     setState(() {
       _currentIndex = index;
@@ -67,6 +122,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
       _selectedPinToMove = null;
       _draggingPin = null;
     });
+    _loadPinsForBuilding();
     _loadPins();
   }
 
@@ -91,6 +147,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
       );
 
       if (result == true) {
+        _loadPinsForBuilding(); // Reload building pins first
         _loadPins();
       }
     }
@@ -111,6 +168,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
             onPressed: () async {
               Navigator.pop(context);
               await DatabaseService.instance.delete('pins', pin.id!);
+              _loadPinsForBuilding(); // Reload building pins first
               _loadPins();
               setState(() {
                 _deleteMode = false;
@@ -418,7 +476,8 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
                   // Pins overlay (inside InteractiveViewer so they move with image)
                   if (index == _currentIndex)
                     ..._pins.map((pin) {
-                      final pinIndex = _pins.indexOf(pin) + 1; // Local numbering
+                      // Building-specific numbering: find this pin's index in all building pins
+                      final pinIndex = _allBuildingPins.indexWhere((p) => p.id == pin.id) + 1;
                       return Positioned(
                         left: pin.x * constraints.maxWidth - 15,
                         top: pin.y * constraints.maxHeight - 30,
@@ -485,12 +544,13 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
             planImage: widget.planImages[_currentIndex],
             x: x,
             y: y,
-            pinNumber: _pins.length + 1, // Next number for this building
+            pinNumber: _allBuildingPins.length + 1, // Next number for this building
           ),
         ),
       );
 
       if (result == true) {
+        _loadPinsForBuilding(); // Reload building pins first
         _loadPins();
         setState(() {
           _annotateMode = false;

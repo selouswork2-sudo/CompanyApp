@@ -360,14 +360,20 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
                         controller: _titleController,
                         autofocus: false,
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: Colors.black,
                           fontSize: 18,
                           fontWeight: FontWeight.w500,
                         ),
                         decoration: const InputDecoration(
-                          border: InputBorder.none,
+                          filled: true,
+                          fillColor: Colors.white,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(6)),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           hintText: 'Enter Title',
-                          hintStyle: TextStyle(color: Colors.white38),
+                          hintStyle: TextStyle(color: Colors.black38),
                         ),
                         onTap: () {
                           // Select all when tapped

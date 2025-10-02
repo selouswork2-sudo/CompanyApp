@@ -904,6 +904,21 @@ class _AddJobNumberDialogState extends State<AddJobNumberDialog> {
       return;
     }
 
+    // Check if job number already exists globally (across all buildings)
+    final existingPlans = await DatabaseService.instance.query(
+      'plans',
+      where: 'job_number = ?',
+      whereArgs: [jobNumber],
+    );
+
+    if (existingPlans.isNotEmpty) {
+      setState(() {
+        _errorText = 'Job Number $jobNumber already exists!';
+        _isCreating = false;
+      });
+      return;
+    }
+
     setState(() {
       _isCreating = true;
       _errorText = null;
