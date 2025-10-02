@@ -5,12 +5,14 @@ import '../models/pin.dart';
 import '../models/plan_image.dart';
 import '../models/pin_comment.dart';
 import '../services/database_service.dart';
+import 'plan_viewer_screen.dart';
 
 class PinDetailScreen extends StatefulWidget {
   final Pin? pin;
   final PlanImage planImage;
   final double x;
   final double y;
+  final int? pinNumber; // Building-specific pin number
 
   const PinDetailScreen({
     super.key,
@@ -18,6 +20,7 @@ class PinDetailScreen extends StatefulWidget {
     required this.planImage,
     required this.x,
     required this.y,
+    this.pinNumber,
   });
 
   @override
@@ -286,9 +289,15 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1C1C1E),
-      appBar: AppBar(
+    return WillPopScope(
+      onWillPop: () async {
+        // Save and go back instead of closing app
+        await _savePin();
+        return false; // Prevent default back action
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF1C1C1E),
+        appBar: AppBar(
         backgroundColor: const Color(0xFF1C1C1E),
         leading: TextButton(
           onPressed: () async {
@@ -301,7 +310,7 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
         ),
         leadingWidth: 80,
         title: Text(
-          widget.pin == null ? 'New Task' : 'Task #${widget.pin!.id}',
+          widget.pin == null ? 'New Task' : 'Task #${widget.pinNumber ?? widget.pin!.id}',
           style: const TextStyle(color: Colors.white),
         ),
         actions: [
@@ -344,12 +353,12 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '#${widget.pin?.id ?? 'New'} | @${widget.planImage.name}',
+                        '#${widget.pinNumber ?? widget.pin?.id ?? 'New'} | @${widget.planImage.name}',
                         style: const TextStyle(color: Colors.white60, fontSize: 12),
                       ),
                       TextField(
                         controller: _titleController,
-                        autofocus: true,
+                        autofocus: false,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 18,
@@ -391,57 +400,71 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
                           style: const TextStyle(color: Colors.white70, fontSize: 14),
                         ),
                         const SizedBox(height: 8),
-                        Stack(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.file(
-                                File(widget.planImage.imagePath),
-                                height: 200,
-                                width: double.infinity,
-                                fit: BoxFit.cover,
+                        GestureDetector(
+                          onTap: () async {
+                            // Open full screen plan viewer
+                            await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => PlanViewerScreen(
+                                  planImages: [widget.planImage],
+                                  initialIndex: 0,
+                                ),
                               ),
-                            ),
-                            // Show pin location on thumbnail
-                            if (widget.pin != null)
-                              Positioned(
-                                left: widget.x * MediaQuery.of(context).size.width * 0.85 - 12,
-                                top: widget.y * 200 - 12,
-                                child: Container(
-                                  width: 24,
-                                  height: 24,
-                                  decoration: BoxDecoration(
-                                    color: Pin(
-                                      planImageId: 0,
-                                      x: 0,
-                                      y: 0,
-                                      title: '',
-                                      status: _selectedStatus,
-                                      createdAt: DateTime.now(),
-                                    ).getStatusColor(),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: Colors.white, width: 2),
-                                    boxShadow: const [
-                                      BoxShadow(
-                                        color: Colors.black87,
-                                        blurRadius: 6,
-                                        offset: Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      '${widget.pin!.id}',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
+                            );
+                          },
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(
+                                  File(widget.planImage.imagePath),
+                                  height: 200,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              // Show pin location on thumbnail
+                              if (widget.pin != null)
+                                Positioned(
+                                  left: widget.x * MediaQuery.of(context).size.width * 0.85 - 12,
+                                  top: widget.y * 200 - 12,
+                                  child: Container(
+                                    width: 24,
+                                    height: 24,
+                                    decoration: BoxDecoration(
+                                      color: Pin(
+                                        planImageId: 0,
+                                        x: 0,
+                                        y: 0,
+                                        title: '',
+                                        status: _selectedStatus,
+                                        createdAt: DateTime.now(),
+                                      ).getStatusColor(),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: Colors.white, width: 2),
+                                      boxShadow: const [
+                                        BoxShadow(
+                                          color: Colors.black87,
+                                          blurRadius: 6,
+                                          offset: Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        '${widget.pinNumber ?? widget.pin!.id}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -495,6 +518,7 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
           ),
         ],
       ),
+    ),
     );
   }
 

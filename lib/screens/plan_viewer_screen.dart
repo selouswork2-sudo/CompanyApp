@@ -71,10 +71,10 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
   }
 
 
-  Future<void> _onPinTap(Pin pin) async {
+  Future<void> _onPinTap(Pin pin, int pinNumber) async {
     if (_deleteMode) {
       // Delete pin
-      _confirmDeletePin(pin);
+      _confirmDeletePin(pin, pinNumber);
     } else if (!_moveMode && !_annotateMode) {
       // Open pin detail (only if not in move/annotate mode)
       final result = await Navigator.push(
@@ -85,6 +85,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
             planImage: widget.planImages[_currentIndex],
             x: pin.x,
             y: pin.y,
+            pinNumber: pinNumber,
           ),
         ),
       );
@@ -95,12 +96,12 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
     }
   }
 
-  void _confirmDeletePin(Pin pin) {
+  void _confirmDeletePin(Pin pin, int pinNumber) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Pin'),
-        content: Text('Are you sure you want to delete Pin #${pin.id}?'),
+        content: Text('Are you sure you want to delete Pin #$pinNumber?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -370,8 +371,9 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
       builder: (context, constraints) {
         return InteractiveViewer(
           transformationController: _transformationController,
-          minScale: 0.5,
-          maxScale: 4.0,
+          minScale: 1.0,
+          maxScale: 5.0,
+          boundaryMargin: const EdgeInsets.all(double.infinity),
           child: GestureDetector(
             onTapDown: (details) {
               if (_annotateMode || (_moveMode && _selectedPinToMove != null)) {
@@ -390,40 +392,48 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
                 _handleTapOnPlanFixed(clampedX, clampedY);
               }
             },
-            child: Stack(
-              children: [
-                // Image
-                Image.file(
-                  File(widget.planImages[index].imagePath),
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) {
-                    return const Center(
-                      child: Icon(
-                        Icons.broken_image,
-                        size: 100,
-                        color: Colors.white54,
-                      ),
-                    );
-                  },
-                ),
-                // Pins overlay (inside InteractiveViewer so they move with image)
-                if (index == _currentIndex)
-                  ..._pins.map((pin) {
-                    return Positioned(
-                      left: pin.x * constraints.maxWidth - 15,
-                      top: pin.y * constraints.maxHeight - 30,
-                      child: _moveMode
-                          ? Draggable<Pin>(
-                              data: pin,
-                              feedback: Opacity(
-                                opacity: 0.7,
-                                child: _buildPinWidget(pin, constraints),
-                              ),
-                              childWhenDragging: Opacity(
-                                opacity: 0.3,
-                                child: _buildPinWidget(pin, constraints),
-                              ),
-                              onDragEnd: (details) async {
+            child: Container(
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+              color: Colors.black,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Image - Full Screen
+                  Image.file(
+                    File(widget.planImages[index].imagePath),
+                    width: constraints.maxWidth,
+                    height: constraints.maxHeight,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) {
+                      return const Center(
+                        child: Icon(
+                          Icons.broken_image,
+                          size: 100,
+                          color: Colors.white54,
+                        ),
+                      );
+                    },
+                  ),
+                  // Pins overlay (inside InteractiveViewer so they move with image)
+                  if (index == _currentIndex)
+                    ..._pins.map((pin) {
+                      final pinIndex = _pins.indexOf(pin) + 1; // Local numbering
+                      return Positioned(
+                        left: pin.x * constraints.maxWidth - 15,
+                        top: pin.y * constraints.maxHeight - 30,
+                        child: _moveMode
+                            ? Draggable<Pin>(
+                                data: pin,
+                                feedback: Opacity(
+                                  opacity: 0.7,
+                                  child: _buildPinWidget(pin, constraints, pinIndex),
+                                ),
+                                childWhenDragging: Opacity(
+                                  opacity: 0.3,
+                                  child: _buildPinWidget(pin, constraints, pinIndex),
+                                ),
+                                onDragEnd: (details) async {
                                 // Convert global position to local
                                 final RenderBox box = context.findRenderObject() as RenderBox;
                                 final localPosition = box.globalToLocal(details.offset);
@@ -445,18 +455,19 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
                                   createdAt: pin.createdAt,
                                 );
                                 
-                                await DatabaseService.instance.update('pins', updatedPin.toMap(), pin.id!);
-                                _loadPins();
-                              },
-                              child: _buildPinWidget(pin, constraints),
-                            )
-                          : GestureDetector(
-                              onTap: () => _onPinTap(pin),
-                              child: _buildPinWidget(pin, constraints),
-                            ),
-                    );
-                  }).toList(),
-              ],
+                                  await DatabaseService.instance.update('pins', updatedPin.toMap(), pin.id!);
+                                  _loadPins();
+                                },
+                                child: _buildPinWidget(pin, constraints, pinIndex),
+                              )
+                            : GestureDetector(
+                                onTap: () => _onPinTap(pin, pinIndex),
+                                child: _buildPinWidget(pin, constraints, pinIndex),
+                              ),
+                      );
+                    }).toList(),
+                ],
+              ),
             ),
           ),
         );
@@ -474,6 +485,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
             planImage: widget.planImages[_currentIndex],
             x: x,
             y: y,
+            pinNumber: _pins.length + 1, // Next number for this building
           ),
         ),
       );
@@ -509,7 +521,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
     }
   }
 
-  Widget _buildPinWidget(Pin pin, BoxConstraints constraints) {
+  Widget _buildPinWidget(Pin pin, BoxConstraints constraints, int pinNumber) {
     return Container(
       width: 30,
       height: 30,
@@ -531,7 +543,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
       ),
       child: Center(
         child: Text(
-          '${pin.id}',
+          '$pinNumber',
           style: const TextStyle(
             color: Colors.white,
             fontSize: 12,

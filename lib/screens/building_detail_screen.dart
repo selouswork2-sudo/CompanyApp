@@ -79,9 +79,15 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_project?.name ?? 'Building'),
+    return WillPopScope(
+      onWillPop: () async {
+        // Go back to projects list instead of closing app
+        context.go('/projects');
+        return false;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_project?.name ?? 'Building'),
         actions: [
           IconButton(
             icon: const Icon(Icons.home),
@@ -102,6 +108,7 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
         ],
       ),
       drawer: Drawer(
+        width: MediaQuery.of(context).size.width * 0.6, // 60% of screen width
         child: Container(
           color: const Color(0xFF2C2C2E),
           child: ListView(
@@ -185,7 +192,10 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
           ),
         ),
       ),
-      body: _buildContent(),
+      body: SafeArea(
+        child: _buildContent(),
+      ),
+    ),
     );
   }
 
@@ -329,20 +339,29 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
   }
 
   void _showPlanMenu(Plan plan) {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
+      builder: (context) => AlertDialog(
+        title: const Text('Job Options'),
+        content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text('Delete', style: TextStyle(color: Colors.red)),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _confirmDeletePlan(plan);
               },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  children: const [
+                    Icon(Icons.delete, color: Colors.red),
+                    SizedBox(width: 12),
+                    Text('Delete', style: TextStyle(color: Colors.red, fontSize: 16)),
+                  ],
+                ),
+              ),
             ),
           ],
         ),

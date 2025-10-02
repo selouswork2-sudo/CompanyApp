@@ -168,9 +168,15 @@ class _JobPlansScreenState extends State<JobPlansScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
+    return WillPopScope(
+      onWillPop: () async {
+        // Go back to building detail instead of closing app
+        Navigator.pop(context);
+        return false;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.jobNumber, style: const TextStyle(fontSize: 18)),
@@ -188,9 +194,10 @@ class _JobPlansScreenState extends State<JobPlansScreen> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _planImages.isEmpty
+      body: SafeArea(
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _planImages.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -274,7 +281,9 @@ class _JobPlansScreenState extends State<JobPlansScreen> {
                     );
                   },
                 ),
-    );
+      ),
+      ),
+      );
+    }
   }
-}
 

@@ -131,9 +131,15 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[100],
-      body: SafeArea(
+    return WillPopScope(
+      onWillPop: () async {
+        // Go back to home screen instead of closing app
+        context.go('/');
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.grey[100],
+        body: SafeArea(
         child: Column(
           children: [
             // Top Search Bar
@@ -243,6 +249,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           ],
         ),
       ),
+    ),
     );
   }
 }
@@ -260,20 +267,29 @@ class ProjectListTile extends StatelessWidget {
   });
 
   void _showProjectMenu(BuildContext context) {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
+      builder: (context) => AlertDialog(
+        title: const Text('Project Options'),
+        content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text('Delete', style: TextStyle(color: Colors.red)),
+            InkWell(
               onTap: () {
                 Navigator.pop(context);
                 _confirmDelete(context);
               },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  children: const [
+                    Icon(Icons.delete, color: Colors.red),
+                    SizedBox(width: 12),
+                    Text('Delete', style: TextStyle(color: Colors.red, fontSize: 16)),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
