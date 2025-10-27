@@ -19,6 +19,7 @@ dependencies:
   
   # Database
   sqflite: ^2.4.1
+  sqflite_common_ffi: ^2.3.0+1
   path_provider: ^2.1.5
   path: ^1.9.0
   
@@ -40,6 +41,16 @@ dependencies:
   # Utilities
   intl: ^0.20.1
   uuid: ^4.5.1
+  
+  # Network & API
+  http: ^1.2.2
+  connectivity_plus: ^6.0.5
+  
+  # Storage
+  shared_preferences: ^2.3.2
+  
+  # Device info for session management
+  device_info_plus: ^10.1.2
 
 dev_dependencies:
   flutter_test:
@@ -48,3 +59,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  
+  assets:
+    - assets/images/

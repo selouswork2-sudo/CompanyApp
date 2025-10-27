@@ -1,258 +1,158 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../theme/app_theme.dart';
-import 'timesheet_screen.dart';
+import '../services/auth_service.dart';
+import '../models/user.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final user = AuthService.currentUser;
+    
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              AppTheme.primaryBlue,
-              AppTheme.secondaryBlue,
-              AppTheme.primaryBlue.withOpacity(0.8),
-            ],
+      appBar: AppBar(
+        title: const Text('Field Pro'),
+        backgroundColor: const Color(0xFF2C2C2E),
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await AuthService.logout();
+              if (context.mounted) {
+                context.go('/login');
+              }
+            },
           ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Logo & Title Section
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.business,
-                          size: 32,
-                          color: AppTheme.primaryBlue,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text(
-                              'Company Field App',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              'Professional Project Management',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.white70,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                
-                const SizedBox(height: 40),
-                
-                // Welcome Text
-                const Text(
-                  'Welcome Back!',
-                  style: TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Select a module to continue',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.white70,
-                  ),
-                ),
-                
-                const SizedBox(height: 40),
-                
-                // Main Buttons Grid
-                Expanded(
-                  child: GridView.count(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    children: [
-                      _buildModuleCard(
-                        context,
-                        icon: Icons.business,
-                        title: 'Projects',
-                        subtitle: 'Manage buildings',
-                        color: AppTheme.accentOrange,
-                        onTap: () => context.go('/projects'),
-                      ),
-                      _buildModuleCard(
-                        context,
-                        icon: Icons.access_time,
-                        title: 'TimeSheet',
-                        subtitle: 'Track hours',
-                        color: AppTheme.success,
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const TimesheetScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      _buildModuleCard(
-                        context,
-                        icon: Icons.description,
-                        title: 'Forms',
-                        subtitle: 'Inspections',
-                        color: AppTheme.warning,
-                        onTap: () {
-                          // TODO: Navigate to forms
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Forms coming soon!')),
-                          );
-                        },
-                      ),
-                      _buildModuleCard(
-                        context,
-                        icon: Icons.bar_chart,
-                        title: 'Reports',
-                        subtitle: 'Analytics',
-                        color: AppTheme.info,
-                        onTap: () {
-                          // TODO: Navigate to reports
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Reports coming soon!')),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                
-                const SizedBox(height: 20),
-                
-                // Version & Settings
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Welcome Card
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Version 1.0.0',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.white60,
-                      ),
+                    Text(
+                      'Hoş Geldiniz!',
+                      style: Theme.of(context).textTheme.headlineSmall,
                     ),
-                    TextButton.icon(
-                      onPressed: () {
-                        // TODO: Settings
-                      },
-                      icon: const Icon(Icons.settings, color: Colors.white70, size: 20),
-                      label: const Text(
-                        'Settings',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ),
+                    const SizedBox(height: 8),
+                    if (user != null) ...[
+                      Text('Ad: ${user.name}'),
+                      Text('Email: ${user.email}'),
+                      Text('Rol: ${_getRoleText(user.role)}'),
+                    ],
                   ],
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModuleCard(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+            const SizedBox(height: 24),
+            
+            // Quick Actions
+            Text(
+              'Hızlı İşlemler',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 16),
+            
+            // Action Buttons
+            Expanded(
+              child: GridView.count(
+                crossAxisCount: 2,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                children: [
+                  _buildActionCard(
+                    context,
+                    'Projeler',
+                    Icons.folder,
+                    Colors.blue,
+                    () {
+                      // TODO: Navigate to projects
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Projeler sayfası yakında!')),
+                      );
+                    },
+                  ),
+                  _buildActionCard(
+                    context,
+                    'İşler',
+                    Icons.work,
+                    Colors.green,
+                    () {
+                      // TODO: Navigate to jobs
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('İşler sayfası yakında!')),
+                      );
+                    },
+                  ),
+                  _buildActionCard(
+                    context,
+                    'Planlar',
+                    Icons.architecture,
+                    Colors.orange,
+                    () {
+                      // TODO: Navigate to plans
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Planlar sayfası yakında!')),
+                      );
+                    },
+                  ),
+                  _buildActionCard(
+                    context,
+                    'Ayarlar',
+                    Icons.settings,
+                    Colors.grey,
+                    () {
+                      // TODO: Navigate to settings
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Ayarlar sayfası yakında!')),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildActionCard(
+    BuildContext context,
+    String title,
+    IconData icon,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return Card(
+      elevation: 2,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16.0),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  icon,
-                  size: 32,
-                  color: color,
-                ),
+              Icon(
+                icon,
+                size: 48,
+                color: color,
               ),
-              const Spacer(),
+              const SizedBox(height: 8),
               Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.textSecondary,
-                ),
+                style: Theme.of(context).textTheme.titleMedium,
+                textAlign: TextAlign.center,
               ),
             ],
           ),
@@ -260,5 +160,15 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
-}
 
+  String _getRoleText(UserRole role) {
+    switch (role) {
+      case UserRole.manager:
+        return 'Manager';
+      case UserRole.supervisor:
+        return 'Supervisor';
+      case UserRole.technician:
+        return 'Technician';
+    }
+  }
+}

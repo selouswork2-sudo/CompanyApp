@@ -3,6 +3,7 @@ import '../models/timesheet.dart';
 import '../models/project.dart';
 import '../models/plan.dart';
 import '../services/database_service.dart';
+import '../services/sync_service.dart';
 import '../theme/app_theme.dart';
 
 class TimesheetScreen extends StatefulWidget {
@@ -30,12 +31,17 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
   Map<int, Plan> _plansMap = {};
   Timesheet? _editingTimesheet;
   DateTime _overviewStartDate = DateTime.now().subtract(const Duration(days: 14)); // Overview date range
+  bool _showNewEntryForm = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(() {
+      setState(() {}); // Rebuild to show/hide FAB
+    });
     _loadProjects();
+    _loadAllPlans();
     _loadTimesheets();
   }
 
@@ -92,6 +98,61 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
     }
   }
 
+  Future<void> _syncWithBaserow() async {
+    try {
+      final syncResult = await SyncService.performFullSync();
+      
+      if (syncResult.success) {
+        // Reload data after successful sync
+        await _loadProjects();
+        await _loadAllPlans();
+        await _loadTimesheets();
+        
+        // Show success message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Sync completed: ${syncResult.projectsSynced} projects, ${syncResult.changesUploaded} changes uploaded'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        // Show error message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Sync failed: ${syncResult.message}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadAllPlans() async {
+    try {
+      final maps = await DatabaseService.instance.query('plans');
+      setState(() {
+        _plans = maps.map((e) => Plan.fromMap(e)).toList();
+      });
+    } catch (e) {
+      setState(() {
+        _plans = [];
+      });
+    }
+  }
+
   Future<void> _loadPlansForProject(int projectId) async {
     try {
       final maps = await DatabaseService.instance.query(
@@ -129,15 +190,16 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
       initialTime: _startTime,
     );
     if (picked != null && picked != _startTime) {
+      final roundedTime = _roundToNearestQuarter(picked);
       setState(() {
-        _startTime = picked;
+        _startTime = roundedTime;
         // Auto-adjust end time if it's before start time
         if (_endTime.hour < _startTime.hour || 
             (_endTime.hour == _startTime.hour && _endTime.minute <= _startTime.minute)) {
-          _endTime = TimeOfDay(
+          _endTime = _roundToNearestQuarter(TimeOfDay(
             hour: (_startTime.hour + 1) % 24,
             minute: _startTime.minute,
-          );
+          ));
         }
       });
     }
@@ -149,10 +211,23 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
       initialTime: _endTime,
     );
     if (picked != null && picked != _endTime) {
+      final roundedTime = _roundToNearestQuarter(picked);
       setState(() {
-        _endTime = picked;
+        _endTime = roundedTime;
       });
     }
+  }
+
+  TimeOfDay _roundToNearestQuarter(TimeOfDay time) {
+    // Round to nearest 15 minutes (0, 15, 30, 45)
+    final minutes = time.minute;
+    final roundedMinutes = ((minutes / 15).round() * 15) % 60;
+    final extraHour = (minutes / 15).round() >= 4 ? 1 : 0;
+    
+    return TimeOfDay(
+      hour: (time.hour + extraHour) % 24,
+      minute: roundedMinutes,
+    );
   }
 
   double _calculateTotalHours() {
@@ -190,8 +265,8 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
   }
 
   Future<void> _saveTimesheet() async {
-    if (_selectedProject == null) {
-      _showErrorDialog('Please select a project');
+    if (_selectedPlan == null) {
+      _showErrorDialog('Please select a job');
       return;
     }
 
@@ -229,8 +304,8 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
       );
 
       final timesheet = Timesheet(
-        projectId: _selectedProject!.id!,
-        planId: _selectedPlan?.id,
+        projectId: _selectedPlan!.projectId,
+        planId: _selectedPlan!.id,
         userId: 'current_user', // TODO: Get from auth
         date: _selectedDate,
         startTime: startDateTime,
@@ -324,34 +399,199 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
       _startTime = TimeOfDay.now();
       _endTime = TimeOfDay.now();
       _notesController.clear();
-      _plans = [];
       _editingTimesheet = null;
+      _showNewEntryForm = false;
     });
+  }
+
+  Widget _buildCompactForm() {
+    return _isLoadingProjects
+        ? const Center(child: CircularProgressIndicator())
+        : Column(
+            children: [
+              // Job Selection
+              DropdownButtonFormField<Plan>(
+                value: _selectedPlan,
+                decoration: InputDecoration(
+                  hintText: 'Select Job',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
+                items: _plans.map((plan) {
+                  return DropdownMenuItem(
+                    value: plan,
+                    child: Text(plan.jobNumber, style: const TextStyle(fontSize: 12)),
+                  );
+                }).toList(),
+                onChanged: (Plan? plan) {
+                  setState(() {
+                    _selectedPlan = plan;
+                    // Auto-select project from the plan
+                    if (plan != null) {
+                      _selectedProject = _projects.firstWhere((p) => p.id == plan.projectId);
+                    }
+                  });
+                },
+              ),
+              
+              const SizedBox(height: 12),
+              
+              // Date and Time Selection
+              Column(
+                children: [
+                  // Date
+                  InkWell(
+                    onTap: _selectDate,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey[300]!),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today, size: 16),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Time
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          onTap: _selectStartTime,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[300]!),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.access_time, size: 14),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _startTime.format(context),
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: InkWell(
+                          onTap: _selectEndTime,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[300]!),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.access_time, size: 14),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _endTime.format(context),
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              
+              const SizedBox(height: 12),
+              
+              // Notes and Save Button
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _notesController,
+                      decoration: InputDecoration(
+                        hintText: 'Notes (optional)',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : (_editingTimesheet != null ? _updateTimesheet : _saveTimesheet),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryBlue,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          )
+                        : Text(
+                            _editingTimesheet != null ? 'Update' : 'Save',
+                            style: const TextStyle(fontSize: 12, color: Colors.white),
+                          ),
+                  ),
+                ],
+              ),
+            ],
+          );
   }
 
   void _editTimesheet(Timesheet timesheet) {
     setState(() {
       _editingTimesheet = timesheet;
       _selectedProject = _projectsMap[timesheet.projectId];
-      _selectedPlan = timesheet.planId != null ? _plansMap[timesheet.planId!] : null;
       _selectedDate = timesheet.date;
       _startTime = TimeOfDay.fromDateTime(timesheet.startTime);
       _endTime = TimeOfDay.fromDateTime(timesheet.endTime);
       _notesController.text = timesheet.notes ?? '';
-      
-      // Load plans for the selected project
-      if (_selectedProject != null) {
-        _loadPlansForProject(_selectedProject!.id!);
-      }
+      _showNewEntryForm = true;
     });
     
-    // Switch to New Entry tab
-    _tabController.animateTo(0);
+    // Load all plans first, then set the selected plan
+    _loadAllPlans().then((_) {
+      if (mounted) {
+        setState(() {
+          // Find the plan from _plans list instead of _plansMap to ensure same reference
+          if (timesheet.planId != null) {
+            _selectedPlan = _plans.firstWhere(
+              (plan) => plan.id == timesheet.planId,
+              orElse: () => _plansMap[timesheet.planId!]!,
+            );
+          } else {
+            _selectedPlan = null;
+          }
+        });
+      }
+    });
   }
 
   Future<void> _updateTimesheet() async {
-    if (_selectedProject == null) {
-      _showErrorDialog('Please select a project');
+    if (_selectedPlan == null) {
+      _showErrorDialog('Please select a job');
       return;
     }
 
@@ -390,8 +630,8 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
 
       final updatedTimesheet = Timesheet(
         id: _editingTimesheet!.id,
-        projectId: _selectedProject!.id!,
-        planId: _selectedPlan?.id,
+        projectId: _selectedPlan!.projectId,
+        planId: _selectedPlan!.id,
         userId: _editingTimesheet!.userId,
         date: _selectedDate,
         startTime: startDateTime,
@@ -510,6 +750,61 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
     );
   }
 
+  void _showDeleteConfirmation(Timesheet timesheet) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Timesheet Entry'),
+        content: Text(
+          'Are you sure you want to delete this timesheet entry?\n\n'
+          'Date: ${_formatDate(timesheet.date)}\n'
+          'Job: ${timesheet.planId != null ? _plansMap[timesheet.planId!]?.jobNumber ?? 'N/A' : 'N/A'}\n'
+          'Time: ${_formatDateTime(timesheet.startTime)} - ${_formatDateTime(timesheet.endTime)}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteTimesheet(timesheet);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteTimesheet(Timesheet timesheet) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await DatabaseService.instance.delete('timesheets', timesheet.id!);
+      
+      if (mounted) {
+        _showSuccessDialog('Timesheet entry deleted successfully!');
+        _resetForm();
+        _loadTimesheets(); // Refresh the timesheet list
+      }
+    } catch (e) {
+      if (mounted) {
+        _showErrorDialog('Failed to delete timesheet: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -518,40 +813,170 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
         title: const Text('Timesheet'),
         backgroundColor: AppTheme.primaryBlue,
         foregroundColor: Colors.white,
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-                 tabs: [
-                   Tab(
-                     icon: Icon(_editingTimesheet != null ? Icons.edit : Icons.add),
-                     text: _editingTimesheet != null ? 'Edit Entry' : 'New Entry',
-                   ),
-                   const Tab(
-                     icon: Icon(Icons.history),
-                     text: 'History',
-                   ),
-                   const Tab(
-                     icon: Icon(Icons.analytics),
-                     text: 'Overview',
-                   ),
-                 ],
-        ),
       ),
       body: SafeArea(
-        child: TabBarView(
-          controller: _tabController,
+        child: Column(
           children: [
-            // New Entry Tab
-            _buildNewEntryTab(),
-            // History Tab
-            _buildHistoryTab(),
-            // Overview Tab
-            _buildOverviewTab(),
+            // New Entry Form (Collapsible)
+            if (_editingTimesheet != null || _showNewEntryForm)
+              Container(
+                margin: const EdgeInsets.all(12),
+                child: Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              _editingTimesheet != null ? Icons.edit : Icons.add,
+                              color: AppTheme.primaryBlue,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _editingTimesheet != null ? 'Edit Entry' : 'New Entry',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                            const Spacer(),
+                            Row(
+                              children: [
+                                if (_editingTimesheet != null)
+                                  IconButton(
+                                    onPressed: () => _showDeleteConfirmation(_editingTimesheet!),
+                                    icon: const Icon(Icons.delete, size: 20, color: Colors.red),
+                                    tooltip: 'Delete Entry',
+                                  ),
+                                IconButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _showNewEntryForm = false;
+                                      _editingTimesheet = null;
+                                      _resetForm();
+                                    });
+                                  },
+                                  icon: const Icon(Icons.close, size: 20),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        _buildCompactForm(),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            
+            // Total Hours Summary
+            if (_timesheets.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 12),
+                child: Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          AppTheme.primaryBlue,
+                          AppTheme.primaryBlue.withOpacity(0.8),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.timer,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Total Hours Worked',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _formatTotalHours(_calculateTotalHoursForAllTimesheets()),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Text(
+                            '${_timesheets.length} entries',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            
+            const SizedBox(height: 8),
+            
+            // Timesheet Table
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _syncWithBaserow,
+                child: _buildHistoryTab(),
+              ),
+            ),
           ],
         ),
       ),
+      floatingActionButton: !_showNewEntryForm && _editingTimesheet == null ? FloatingActionButton(
+        onPressed: () {
+          setState(() {
+            _showNewEntryForm = true;
+          });
+        },
+        backgroundColor: AppTheme.primaryBlue,
+        child: const Icon(Icons.add, color: Colors.white),
+      ) : null,
     );
   }
 
@@ -812,6 +1237,7 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
           );
   }
 
+
   Widget _buildHistoryTab() {
     return _isLoadingTimesheets
         ? const Center(child: CircularProgressIndicator())
@@ -834,106 +1260,180 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
                   ],
                 ),
               )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: _timesheets.length,
-                      itemBuilder: (context, index) {
-                  final timesheet = _timesheets[index];
-                  final project = _projectsMap[timesheet.projectId];
-                  final plan = timesheet.planId != null ? _plansMap[timesheet.planId!] : null;
-
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    elevation: 1,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    child: InkWell(
-                      onTap: () => _editTimesheet(timesheet),
+            : Column(
+                children: [
+                  // Table Header
+                  Container(
+                    margin: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryBlue.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                            Text(
-                              _formatDate(timesheet.date),
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.textSecondary,
-                              ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            'Date',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryBlue,
                             ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: _getStatusColor(timesheet.status).withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  timesheet.status.toUpperCase(),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: _getStatusColor(timesheet.status),
-                                  ),
-                                ),
-                              ),
-                            ],
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Project: ${project?.name ?? 'N/A'}',
-                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-                          ),
-                          if (plan != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2.0),
-                              child: Text(
-                                'Job: ${plan.jobNumber}',
-                                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                              ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            'Job',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryBlue,
                             ),
-                          const SizedBox(height: 6),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                '${_formatDateTime(timesheet.startTime)} - ${_formatDateTime(timesheet.endTime)}',
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.primaryBlue.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  _formatTotalHours(_calculateTotalHoursForTimesheet(timesheet)),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppTheme.primaryBlue,
-                                  ),
-                                ),
-                              ),
-                            ],
                           ),
-                          if (timesheet.notes != null && timesheet.notes!.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4.0),
-                              child: Text(
-                                'Notes: ${timesheet.notes}',
-                                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                              ),
+                        ),
+                        Expanded(
+                          flex: 1,
+                          child: Text(
+                            'Start',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryBlue,
                             ),
-                        ],
-                      ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 1,
+                          child: Text(
+                            'Finish',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryBlue,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 1,
+                          child: Text(
+                            'Hours',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryBlue,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            'Allowance',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryBlue,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  );
-                },
+                  
+                  // Table Body
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      itemCount: _timesheets.length,
+                      itemBuilder: (context, index) {
+                        final timesheet = _timesheets[index];
+                        final project = _projectsMap[timesheet.projectId];
+                        final plan = timesheet.planId != null ? _plansMap[timesheet.planId!] : null;
+                        final isEven = index % 2 == 0;
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: isEven ? Colors.white : Colors.grey[50],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.grey[200]!),
+                          ),
+                          child: InkWell(
+                            onTap: () => _editTimesheet(timesheet),
+                            onLongPress: () => _showDeleteConfirmation(timesheet),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: Text(
+                                    _formatDate(timesheet.date),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Text(
+                                    plan?.jobNumber ?? '-',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 1,
+                                  child: Text(
+                                    _formatDateTime(timesheet.startTime),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 1,
+                                  child: Text(
+                                    _formatDateTime(timesheet.endTime),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 1,
+                                  child: Text(
+                                    _formatTotalHours(_calculateTotalHoursForTimesheet(timesheet)),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppTheme.primaryBlue,
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Text(
+                                    timesheet.notes ?? 'yard work',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               );
   }
 
@@ -948,6 +1448,14 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
   double _calculateTotalHoursForTimesheet(Timesheet timesheet) {
     final duration = timesheet.endTime.difference(timesheet.startTime);
     return duration.inMinutes / 60.0;
+  }
+
+  double _calculateTotalHoursForAllTimesheets() {
+    double totalHours = 0.0;
+    for (var timesheet in _timesheets) {
+      totalHours += _calculateTotalHoursForTimesheet(timesheet);
+    }
+    return totalHours;
   }
 
   Color _getStatusColor(String status) {
@@ -1056,6 +1564,109 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
       ],
     );
   }
+
+  Widget _buildStatCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  icon,
+                  color: color,
+                  size: 20,
+                ),
+              ),
+              const Spacer(),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeInfo({
+    required String label,
+    required String time,
+    required IconData icon,
+    bool isHighlight = false,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isHighlight ? AppTheme.primaryBlue : AppTheme.textSecondary,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: AppTheme.textSecondary,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          time,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: isHighlight ? AppTheme.primaryBlue : AppTheme.textPrimary,
+          ),
+        ),
+      ],
+    );
+  }
+
 
   Future<void> _selectOverviewStartDate() async {
     final DateTime? picked = await showDatePicker(

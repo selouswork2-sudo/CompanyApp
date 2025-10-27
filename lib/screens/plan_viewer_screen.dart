@@ -1,9 +1,185 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:go_router/go_router.dart';
 import '../models/plan_image.dart';
 import '../models/pin.dart';
+import '../models/pin_comment.dart';
 import '../services/database_service.dart';
 import 'pin_detail_screen.dart';
+
+class _PhotoCategorySelector extends StatefulWidget {
+  final List<XFile> photos;
+  final Function(List<Map<String, dynamic>>) onSave;
+  final VoidCallback onCancel;
+
+  const _PhotoCategorySelector({
+    required this.photos,
+    required this.onSave,
+    required this.onCancel,
+  });
+
+  @override
+  State<_PhotoCategorySelector> createState() => _PhotoCategorySelectorState();
+}
+
+class _PhotoCategorySelectorState extends State<_PhotoCategorySelector> {
+  final Map<int, String> _selectedCategories = {};
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize all photos with 'before' category
+    for (int i = 0; i < widget.photos.length; i++) {
+      _selectedCategories[i] = 'before';
+    }
+  }
+
+  Color _getCategoryColor(String category) {
+    switch (category) {
+      case 'before':
+        return Colors.green;
+      case 'during':
+        return Colors.orange;
+      case 'after':
+        return Colors.blue;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Select Categories (${widget.photos.length} photos)'),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+        actions: [
+          TextButton(
+            onPressed: widget.onCancel,
+            child: const Text('Cancel', style: TextStyle(color: Colors.red)),
+          ),
+          TextButton(
+            onPressed: () {
+              final List<Map<String, dynamic>> result = [];
+              for (int i = 0; i < widget.photos.length; i++) {
+                result.add({
+                  'path': widget.photos[i].path,
+                  'category': _selectedCategories[i] ?? 'before',
+                });
+              }
+              widget.onSave(result);
+            },
+            child: const Text('Save', style: TextStyle(color: Colors.blue)),
+          ),
+        ],
+      ),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: widget.photos.length,
+        itemBuilder: (context, index) {
+          final photo = widget.photos[index];
+          final selectedCategory = _selectedCategories[index] ?? 'before';
+          
+          return Card(
+            margin: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              children: [
+                // Photo preview
+                Container(
+                  height: 200,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                    color: Colors.grey[100],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                    child: Image.file(
+                      File(photo.path),
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          color: Colors.grey[300],
+                          child: const Center(
+                            child: Icon(Icons.image, color: Colors.grey, size: 64),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                
+                // Category selection buttons
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _buildCategoryButton(
+                          'before',
+                          'Before',
+                          selectedCategory == 'before',
+                          () => setState(() => _selectedCategories[index] = 'before'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildCategoryButton(
+                          'during',
+                          'During',
+                          selectedCategory == 'during',
+                          () => setState(() => _selectedCategories[index] = 'during'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildCategoryButton(
+                          'after',
+                          'After',
+                          selectedCategory == 'after',
+                          () => setState(() => _selectedCategories[index] = 'after'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildCategoryButton(String category, String label, bool isSelected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? _getCategoryColor(category) : Colors.grey[200],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? _getCategoryColor(category) : Colors.grey[400]!,
+            width: 2,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.white : Colors.grey[700],
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class PlanViewerScreen extends StatefulWidget {
   final List<PlanImage> planImages;
@@ -20,624 +196,1247 @@ class PlanViewerScreen extends StatefulWidget {
 }
 
 class _PlanViewerScreenState extends State<PlanViewerScreen> {
-  late PageController _pageController;
   late int _currentIndex;
-  bool _showMenu = false;
-  bool _annotateMode = false;
-  bool _moveMode = false;
-  bool _deleteMode = false;
   List<Pin> _pins = [];
-  List<Pin> _allBuildingPins = []; // All pins in this building
-  Pin? _selectedPinToMove;
   Pin? _draggingPin;
-  final TransformationController _transformationController = TransformationController();
+  bool _isLoading = true;
+  Map<int, List<Map<String, dynamic>>> _pinPhotos = {}; // pinId -> list of photo objects
+  bool _showMenu = false;
+  String _currentMode = 'normal'; // normal, add, move, delete
+  Pin? _pinToDelete;
+  final ScrollController _pinListController = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
-    _pageController = PageController(initialPage: widget.initialIndex);
-    _loadPinsForBuilding();
     _loadPins();
   }
 
   @override
   void dispose() {
-    _pageController.dispose();
-    _transformationController.dispose();
+    _pinListController.dispose();
     super.dispose();
   }
 
   Future<void> _loadPins() async {
+    if (widget.planImages.isEmpty) {
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    final currentPlanImage = widget.planImages[_currentIndex];
     final maps = await DatabaseService.instance.query(
       'pins',
       where: 'plan_image_id = ?',
-      whereArgs: [widget.planImages[_currentIndex].id],
+      whereArgs: [currentPlanImage.id],
     );
+    
     setState(() {
       _pins = maps.map((e) => Pin.fromMap(e)).toList();
+      _isLoading = false;
     });
+    
+    // Load photos for each pin
+    await _loadPinPhotos();
   }
 
-  Future<void> _loadPinsForBuilding() async {
-    // Get the first plan image's plan_id to find the project_id
-    final planImageId = widget.planImages.first.planId;
-    
-    // Get the plan (job) to find project_id
-    final planMaps = await DatabaseService.instance.query(
-      'plans',
-      where: 'id = ?',
-      whereArgs: [planImageId],
-    );
-    
-    if (planMaps.isEmpty) return;
-    
-    final projectId = planMaps.first['project_id'];
-    
-    // Get all plans (jobs) for this building
-    final allPlansForBuilding = await DatabaseService.instance.query(
-      'plans',
-      where: 'project_id = ?',
-      whereArgs: [projectId],
-    );
-    
-    // Collect all pins from all plan images in this building
-    List<Pin> allPins = [];
-    
-    for (var plan in allPlansForBuilding) {
-      // Get all plan images for this job
-      final planImages = await DatabaseService.instance.query(
-        'plan_images',
-        where: 'plan_id = ?',
-        whereArgs: [plan['id']],
+  Future<void> _loadPinPhotos() async {
+    for (final pin in _pins) {
+      final photoMaps = await DatabaseService.instance.query(
+        'pin_photos',
+        where: 'pin_id = ?',
+        whereArgs: [pin.id],
       );
       
-      // Get all pins for each plan image
-      for (var planImage in planImages) {
-        final pins = await DatabaseService.instance.query(
-          'pins',
-          where: 'plan_image_id = ?',
-          whereArgs: [planImage['id']],
-        );
-        
-        allPins.addAll(pins.map((e) => Pin.fromMap(e)));
-      }
+      setState(() {
+        _pinPhotos[pin.id!] = photoMaps.map((e) => {
+          'id': e['id'],
+          'image_path': e['image_path'] as String,
+          'category': e['category'] as String? ?? 'before',
+        }).toList();
+      });
     }
+  }
+
+  Future<void> _addPin(double x, double y) async {
+    if (widget.planImages.isEmpty) return;
     
-    // Sort by creation date
-    allPins.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    
+    final currentPlanImage = widget.planImages[_currentIndex];
+    final newPin = Pin(
+      id: DateTime.now().millisecondsSinceEpoch,
+      planImageId: currentPlanImage.id!,
+      x: x,
+      y: y,
+      title: 'Pin ${_pins.length + 1}',
+      createdAt: DateTime.now(),
+    );
+
+    await DatabaseService.instance.insert('pins', newPin.toMap());
     setState(() {
-      _allBuildingPins = allPins;
+      _pins.add(newPin);
+      _currentMode = 'normal'; // Reset mode after adding
     });
   }
 
-  void _onPageChanged(int index) {
+  void _setMode(String mode) {
     setState(() {
-      _currentIndex = index;
-      _annotateMode = false;
-      _moveMode = false;
-      _deleteMode = false;
+      // If clicking the same mode, toggle to normal
+      if (_currentMode == mode) {
+        _currentMode = 'normal';
+      } else {
+        _currentMode = mode;
+      }
       _showMenu = false;
-      _selectedPinToMove = null;
-      _draggingPin = null;
+      _pinToDelete = null;
     });
-    _loadPinsForBuilding();
-    _loadPins();
   }
 
-
-  Future<void> _onPinTap(Pin pin, int pinNumber) async {
-    if (_deleteMode) {
-      // Delete pin
-      _confirmDeletePin(pin, pinNumber);
-    } else if (!_moveMode && !_annotateMode) {
-      // Open pin detail (only if not in move/annotate mode)
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PinDetailScreen(
-            pin: pin,
-            planImage: widget.planImages[_currentIndex],
-            x: pin.x,
-            y: pin.y,
-            pinNumber: pinNumber,
-          ),
-        ),
-      );
-
-      if (result == true) {
-        _loadPinsForBuilding(); // Reload building pins first
-        _loadPins();
-      }
-    }
-  }
-
-  void _confirmDeletePin(Pin pin, int pinNumber) {
+  void _showDeleteConfirmation(Pin pin) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Pin'),
-        content: Text('Are you sure you want to delete Pin #$pinNumber?'),
+        content: Text('Are you sure you want to delete "${pin.title}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          ElevatedButton(
-            onPressed: () async {
+          TextButton(
+            onPressed: () {
               Navigator.pop(context);
-              await DatabaseService.instance.delete('pins', pin.id!);
-              _loadPinsForBuilding(); // Reload building pins first
-              _loadPins();
-              setState(() {
-                _deleteMode = false;
-              });
+              _deletePin(pin);
+              _setMode('normal');
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete'),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _deletePlanImage() async {
-    final confirm = await showDialog<bool>(
+  Future<void> _deletePin(Pin pin) async {
+    await DatabaseService.instance.delete('pins', pin.id!);
+    setState(() {
+      _pins.removeWhere((p) => p.id == pin.id);
+    });
+  }
+
+  Future<void> _updatePinPosition(Pin pin, double newX, double newY) async {
+    final updatedPin = Pin(
+      id: pin.id,
+      planImageId: pin.planImageId,
+      x: newX,
+      y: newY,
+      title: pin.title,
+      description: pin.description,
+      assignedTo: pin.assignedTo,
+      status: pin.status,
+      createdAt: pin.createdAt,
+    );
+
+    await DatabaseService.instance.update(
+          'pins',
+      updatedPin.toMap(),
+      pin.id!,
+    );
+
+    setState(() {
+      final index = _pins.indexWhere((p) => p.id == pin.id);
+      if (index != -1) {
+        _pins[index] = updatedPin;
+      }
+    });
+  }
+
+  Future<void> _addPhotoToPin(Pin pin) async {
+    // Check if running on Windows
+    final isWindows = Platform.isWindows;
+    
+    if (isWindows) {
+      // For Windows, use file picker to select images
+      final picker = ImagePicker();
+      List<XFile> pickedFiles = [];
+      
+      // Pick multiple images from gallery on Windows
+      pickedFiles = await picker.pickMultiImage();
+      
+      if (pickedFiles.isNotEmpty) {
+        // Show photo preview with category selection
+        final List<Map<String, dynamic>> photoCategories = await _showPhotoCategorySelector(pickedFiles);
+        
+        if (photoCategories.isNotEmpty) {
+          // Save all photos to database
+          for (final photoData in photoCategories) {
+            await DatabaseService.instance.insert('pin_photos', {
+              'pin_id': pin.id,
+              'image_path': photoData['path'],
+              'category': photoData['category'],
+              'created_at': DateTime.now().toIso8601String(),
+            });
+            
+            // Add photo to local state
+    setState(() {
+              if (!_pinPhotos.containsKey(pin.id)) {
+                _pinPhotos[pin.id!] = [];
+              }
+              _pinPhotos[pin.id!]!.add({
+                'id': null, // Will be set by database
+                'image_path': photoData['path'],
+                'category': photoData['category'],
+              });
+            });
+          }
+          
+          print('${photoCategories.length} photo${photoCategories.length > 1 ? 's' : ''} added to pin');
+        }
+      }
+      return;
+    }
+    
+    // Original code for mobile platforms
+    final String? source = await showModalBottomSheet<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Plan'),
-        content: Text('Are you sure you want to delete "${widget.planImages[_currentIndex].name}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(context, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Gallery (Single)'),
+              onTap: () => Navigator.pop(context, 'gallery_single'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Gallery (Multiple)'),
+              onTap: () => Navigator.pop(context, 'gallery_multiple'),
+            ),
+          ],
+        ),
       ),
     );
 
-    if (confirm == true) {
-      final planImageToDelete = widget.planImages[_currentIndex];
-      
-      // Delete from database
-      await DatabaseService.instance.delete('plan_images', planImageToDelete.id!);
-      
-      // Delete file
-      try {
-        final file = File(planImageToDelete.imagePath);
-        if (await file.exists()) {
-          await file.delete();
+    if (source != null) {
+      final picker = ImagePicker();
+      List<XFile> pickedFiles = [];
+
+      if (source == 'gallery_multiple') {
+        // Pick multiple images from gallery
+        pickedFiles = await picker.pickMultiImage();
+      } else if (source == 'gallery_single') {
+        // Pick single image from gallery
+        final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+        if (pickedFile != null) {
+          pickedFiles = [pickedFile];
         }
-      } catch (e) {
-        // Ignore file deletion errors
+      } else if (source == 'camera') {
+        // Pick single image from camera
+        final pickedFile = await picker.pickImage(source: ImageSource.camera);
+        if (pickedFile != null) {
+          pickedFiles = [pickedFile];
+        }
       }
 
-      if (mounted) {
-        // If this was the last image, go back
-        if (widget.planImages.length == 1) {
-          Navigator.pop(context, true);
-        } else {
-          // Remove from list and update
-          widget.planImages.removeAt(_currentIndex);
-          if (_currentIndex >= widget.planImages.length) {
-            _currentIndex = widget.planImages.length - 1;
+      if (pickedFiles.isNotEmpty) {
+        // Show photo preview with category selection
+        final List<Map<String, dynamic>> photoCategories = await _showPhotoCategorySelector(pickedFiles);
+        
+        if (photoCategories.isNotEmpty) {
+          // Save all photos to database
+          for (final photoData in photoCategories) {
+            await DatabaseService.instance.insert('pin_photos', {
+              'pin_id': pin.id,
+              'image_path': photoData['path'],
+              'category': photoData['category'],
+              'created_at': DateTime.now().toIso8601String(),
+            });
+            
+            // Add photo to local state
+    setState(() {
+              if (!_pinPhotos.containsKey(pin.id)) {
+                _pinPhotos[pin.id!] = [];
+              }
+              _pinPhotos[pin.id!]!.add({
+                'id': null, // Will be set by database
+                'image_path': photoData['path'],
+                'category': photoData['category'],
+              });
+            });
           }
-          _pageController.jumpToPage(_currentIndex);
-          _loadPins();
-          setState(() {});
+          
+          print('${photoCategories.length} photo${photoCategories.length > 1 ? 's' : ''} added to pin');
         }
       }
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        // Handle back button - navigate back instead of closing app
-        Navigator.of(context).pop();
-        return false;
-      },
-      child: Scaffold(
+  Color _getPinColor(Pin pin) {
+    if (_draggingPin?.id == pin.id) {
+      return Colors.orange;
+    }
+    if (_currentMode == 'move') {
+      return Colors.purple;
+    }
+    if (_currentMode == 'delete') {
+      return Colors.red;
+    }
+    
+    // Check if pin has all categories
+    final pinPhotos = _pinPhotos[pin.id] ?? [];
+    final categories = pinPhotos.map((photo) => photo['category'] as String).toSet();
+    
+    if (_currentMode == 'normal') {
+      // Normal mode: show category status
+      if (categories.containsAll(['before', 'during', 'after'])) {
+        return Colors.green; // Complete - all categories present
+      } else if (categories.isNotEmpty) {
+        return Colors.orange; // Partial - some categories missing
+      } else {
+        return Colors.grey; // Empty - no photos
+      }
+    }
+    
+    return Colors.blue;
+  }
+
+  Color _getModeColor() {
+    switch (_currentMode) {
+      case 'add':
+        return Colors.green;
+      case 'move':
+        return Colors.orange;
+      case 'delete':
+        return Colors.red;
+      default:
+        return Colors.blue;
+    }
+  }
+
+  String _getModeText() {
+    switch (_currentMode) {
+      case 'add':
+        return 'ADD MODE';
+      case 'move':
+        return 'MOVE MODE';
+      case 'delete':
+        return 'DELETE MODE';
+      default:
+        return 'NORMAL';
+    }
+  }
+
+  IconData _getModeIcon() {
+    switch (_currentMode) {
+      case 'add':
+        return Icons.add;
+      case 'move':
+        return Icons.open_with;
+      case 'delete':
+        return Icons.delete;
+      default:
+        return Icons.menu;
+    }
+  }
+
+  Color _getCategoryColor(String category) {
+    switch (category) {
+      case 'before':
+        return Colors.green;
+      case 'during':
+        return Colors.orange;
+      case 'after':
+        return Colors.blue;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _showPhotoCategorySelector(List<XFile> pickedFiles) async {
+    final List<Map<String, dynamic>> photoCategories = [];
+    
+    return await showDialog<List<Map<String, dynamic>>>(
+      context: context,
+      builder: (context) => Dialog.fullscreen(
+        child: _PhotoCategorySelector(
+          photos: pickedFiles,
+          onSave: (categories) {
+            Navigator.pop(context, categories);
+          },
+          onCancel: () {
+            Navigator.pop(context, <Map<String, dynamic>>[]);
+          },
+        ),
+      ),
+    ) ?? <Map<String, dynamic>>[];
+  }
+
+  void _scrollToPin(Pin pin) {
+    final pinIndex = _pins.indexWhere((p) => p.id == pin.id);
+    if (pinIndex != -1 && _pinListController.hasClients) {
+      // Use scrollToIndex for more accurate positioning
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pinListController.hasClients) {
+          // Calculate more accurate position based on actual item height
+          final itemHeight = 140.0; // More accurate height including margins
+          final targetPosition = pinIndex * itemHeight;
+          
+          // Ensure the pin is fully visible by adding some padding
+          final maxScroll = _pinListController.position.maxScrollExtent;
+          final adjustedPosition = targetPosition.clamp(0.0, maxScroll);
+          
+          _pinListController.animateTo(
+            adjustedPosition,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeInOut,
+          );
+        }
+      });
+    }
+  }
+
+  void _showPhotoOptionsDialog(Pin pin, Map<String, dynamic> photo) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.swap_horiz),
+              title: const Text('Change Photo'),
+              onTap: () {
+                Navigator.pop(context);
+                _showChangePhotoDialog(pin, photo);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('Edit Category'),
+              onTap: () {
+                Navigator.pop(context);
+                _showEditCategoryDialog(pin, photo);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Delete Photo', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.pop(context);
+                _showDeletePhotoDialog(pin, photo);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDeletePhotoDialog(Pin pin, Map<String, dynamic> photo) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Photo'),
+        content: Text('Are you sure you want to delete this ${photo['category']} photo?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _deletePhoto(pin, photo);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditCategoryDialog(Pin pin, Map<String, dynamic> photo) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'Change Category',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            ListTile(
+              leading: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: Colors.green,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              title: const Text('Before'),
+              trailing: photo['category'] == 'before' ? const Icon(Icons.check) : null,
+              onTap: () {
+                Navigator.pop(context);
+                _changePhotoCategory(pin, photo, 'before');
+              },
+            ),
+            ListTile(
+              leading: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: Colors.orange,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              title: const Text('During'),
+              trailing: photo['category'] == 'during' ? const Icon(Icons.check) : null,
+              onTap: () {
+                Navigator.pop(context);
+                _changePhotoCategory(pin, photo, 'during');
+              },
+            ),
+            ListTile(
+              leading: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: Colors.blue,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              title: const Text('After'),
+              trailing: photo['category'] == 'after' ? const Icon(Icons.check) : null,
+              onTap: () {
+                Navigator.pop(context);
+                _changePhotoCategory(pin, photo, 'after');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _changePhotoCategory(Pin pin, Map<String, dynamic> photo, String newCategory) async {
+    try {
+      // Update in database if it has an ID
+      if (photo['id'] != null) {
+        await DatabaseService.instance.update('pin_photos', {
+          'category': newCategory,
+        }, photo['id']);
+      }
+      
+      // Update local state
+      setState(() {
+        if (_pinPhotos.containsKey(pin.id)) {
+          final photoIndex = _pinPhotos[pin.id!]!.indexWhere((p) => p['image_path'] == photo['image_path']);
+          if (photoIndex != -1) {
+            _pinPhotos[pin.id!]![photoIndex]['category'] = newCategory;
+          }
+        }
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Photo category changed to $newCategory')),
+        );
+        }
+      } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to change category: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showChangePhotoDialog(Pin pin, Map<String, dynamic> photo) async {
+    // First select image source
+    final String? source = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(context, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(context, 'gallery'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source != null) {
+      final picker = ImagePicker();
+      XFile? newPhoto;
+
+      if (source == 'camera') {
+        newPhoto = await picker.pickImage(source: ImageSource.camera);
+      } else if (source == 'gallery') {
+        newPhoto = await picker.pickImage(source: ImageSource.gallery);
+      }
+
+      if (newPhoto != null) {
+        try {
+          // Update in database if it has an ID
+          if (photo['id'] != null && newPhoto != null) {
+            await DatabaseService.instance.update('pin_photos', {
+              'image_path': newPhoto.path,
+            }, photo['id']);
+          }
+          
+          // Update local state
+          setState(() {
+            if (_pinPhotos.containsKey(pin.id)) {
+              final photoIndex = _pinPhotos[pin.id!]!.indexWhere((p) => p['image_path'] == photo['image_path']);
+              if (photoIndex != -1) {
+                _pinPhotos[pin.id!]![photoIndex]['image_path'] = newPhoto?.path ?? '';
+              }
+            }
+          });
+
+      if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Photo changed successfully')),
+            );
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Failed to change photo: $e')),
+            );
+          }
+        }
+      }
+    }
+  }
+
+  Future<void> _deletePhoto(Pin pin, Map<String, dynamic> photo) async {
+    try {
+      // Delete from database if it has an ID
+      if (photo['id'] != null) {
+        await DatabaseService.instance.delete('pin_photos', photo['id']);
+      }
+      
+      // Remove from local state
+      setState(() {
+        if (_pinPhotos.containsKey(pin.id)) {
+          _pinPhotos[pin.id!]!.removeWhere((p) => p['image_path'] == photo['image_path']);
+        }
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Photo deleted')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete photo: $e')),
+        );
+      }
+    }
+  }
+
+  void _showFullScreenImage(String imagePath) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog.fullscreen(
         backgroundColor: Colors.black,
-        body: SafeArea(
           child: Stack(
         children: [
-          // Image viewer with pins
-          PageView.builder(
-            controller: _pageController,
-            itemCount: widget.planImages.length,
-            onPageChanged: _onPageChanged,
-            itemBuilder: (context, index) {
-              return _buildImageWithPins(index);
-            },
-          ),
-
-          // Top bar
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Container(
-              padding: EdgeInsets.only(
-                top: MediaQuery.of(context).padding.top,
-                left: 8,
-                right: 8,
-                bottom: 8,
-              ),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.7),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  Expanded(
-                    child: Text(
-                      widget.planImages[_currentIndex].name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
+            // Full screen image
+            Center(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 3.0,
+                child: Image.file(
+                  File(imagePath),
+                  fit: BoxFit.contain,
+                  width: double.infinity,
+                  height: double.infinity,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      width: double.infinity,
+                      height: double.infinity,
+                      color: Colors.grey[800],
+                      child: const Center(
+                        child: Icon(Icons.image, color: Colors.white, size: 64),
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  Text(
-                    '${_currentIndex + 1}/${widget.planImages.length}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-              ),
-            ),
-          ),
-
-          // Mode indicators
-          if (_annotateMode || _moveMode || _deleteMode)
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 60,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: _annotateMode 
-                        ? Colors.orange 
-                        : _moveMode 
-                            ? Colors.blue 
-                            : Colors.red,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _annotateMode 
-                        ? 'Tap on plan to add pin' 
-                        : _moveMode
-                            ? 'Drag a pin to move it'
-                            : 'Tap a pin to delete it',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ),
-
-          // Bottom right menu button
+            // Close button
           Positioned(
-            bottom: 16,
-            right: 16,
+              top: 50,
+              right: 20,
+            child: Container(
+              decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                    onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                ),
+              ),
+            ),
+            // Share button
+            Positioned(
+              top: 50,
+              left: 20,
+                child: Container(
+                  decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  onPressed: () {
+                    // Share functionality can be added here
+                  },
+                  icon: const Icon(Icons.share, color: Colors.white, size: 30),
+                    ),
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem(int index, IconData icon, String label) {
+    final isSelected = index == 1; // Projects is selected when on this screen
+    
+    return GestureDetector(
+      onTap: () {
+        // Navigate to the correct route
+        switch (index) {
+          case 0:
+            context.go('/');
+            break;
+          case 1:
+            context.go('/projects');
+            break;
+          case 2:
+            context.go('/timesheet');
+            break;
+          case 3:
+            context.go('/photos');
+            break;
+          case 4:
+            context.go('/team');
+            break;
+        }
+      },
+            child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (_showMenu) ...[
-                  _buildMenuButton(
-                    Icons.pin_drop,
-                    'Annotate',
-                    () {
-                      setState(() {
-                        _annotateMode = !_annotateMode;
-                        _moveMode = false;
-                        _deleteMode = false;
-                        _selectedPinToMove = null;
-                        _showMenu = false;
-                      });
-                    },
-                    color: _annotateMode ? Colors.orange : null,
-                  ),
-                  const SizedBox(height: 8),
-                  _buildMenuButton(
-                    Icons.open_in_full,
-                    'Move',
-                    () {
-                      setState(() {
-                        _moveMode = !_moveMode;
-                        _annotateMode = false;
-                        _deleteMode = false;
-                        _selectedPinToMove = null;
-                        _showMenu = false;
-                      });
-                    },
-                    color: _moveMode ? Colors.blue : null,
-                  ),
-                  const SizedBox(height: 8),
-                  _buildMenuButton(
-                    Icons.delete_outline,
-                    'Delete',
-                    () {
-                      setState(() {
-                        _deleteMode = !_deleteMode;
-                        _moveMode = false;
-                        _annotateMode = false;
-                        _showMenu = false;
-                      });
-                    },
-                    color: _deleteMode ? Colors.red : null,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                FloatingActionButton(
-                  onPressed: () {
-                    setState(() {
-                      _showMenu = !_showMenu;
-                      if (!_showMenu) {
-                        _annotateMode = false;
-                        _moveMode = false;
-                        _deleteMode = false;
-                        _selectedPinToMove = null;
-                      }
-                    });
-                  },
-                  backgroundColor: Colors.blue,
-                  child: AnimatedRotation(
-                    turns: _showMenu ? 0.125 : 0,
-                    duration: const Duration(milliseconds: 200),
-                    child: Icon(_showMenu ? Icons.close : Icons.menu),
-                  ),
+            Icon(
+              icon,
+              color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+            ),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Theme.of(context).primaryColor : Colors.grey,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (widget.planImages.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Plan Viewer')),
+        body: const Center(child: Text('No plan images available')),
+        bottomNavigationBar: SafeArea(
+            child: Container(
+              decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  offset: const Offset(0, -2),
                 ),
               ],
             ),
-          ),
-        ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  // Navigation items will be added here
+                ],
+              ),
       ),
       ),
       ),
     );
   }
 
-  Widget _buildImageWithPins(int index) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return InteractiveViewer(
-          transformationController: _transformationController,
-          minScale: 1.0,
-          maxScale: 5.0,
-          boundaryMargin: const EdgeInsets.all(double.infinity),
-          child: GestureDetector(
+    final currentPlanImage = widget.planImages[_currentIndex];
+    final screenHeight = MediaQuery.of(context).size.height;
+    final planHeight = screenHeight * 0.5; // Plan takes upper half
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Plan: ${currentPlanImage.name ?? 'Untitled'}'),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+      ),
+      body: Column(
+        children: [
+          // Plan Image Section (Upper Half)
+          Container(
+            height: planHeight,
+            width: double.infinity,
+            color: Colors.grey[100],
+            child: Stack(
+              children: [
+                // Plan Image with Zoom and Pins
+                InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 3.0,
+                  child: Stack(
+                    children: [
+                      // Plan Image
+                      GestureDetector(
             onTapDown: (details) {
-              if (_annotateMode || (_moveMode && _selectedPinToMove != null)) {
-                // Get the tap position relative to the image
-                final RenderBox box = context.findRenderObject() as RenderBox;
-                final localPosition = box.globalToLocal(details.globalPosition);
-                
-                // Normalize to 0-1 range
-                final x = localPosition.dx / constraints.maxWidth;
-                final y = localPosition.dy / constraints.maxHeight;
-                
-                // Clamp to valid range
-                final clampedX = x.clamp(0.0, 1.0);
-                final clampedY = y.clamp(0.0, 1.0);
-                
-                _handleTapOnPlanFixed(clampedX, clampedY);
-              }
-            },
-            child: Container(
-              width: constraints.maxWidth,
-              height: constraints.maxHeight,
-              color: Colors.black,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // Image - Full Screen
-                  Image.file(
-                    File(widget.planImages[index].imagePath),
-                    width: constraints.maxWidth,
-                    height: constraints.maxHeight,
+                          if (_currentMode == 'add') {
+                            // Get the plan image container bounds
+                            final RenderBox? planBox = context.findRenderObject() as RenderBox?;
+                            if (planBox != null) {
+                              final localPosition = planBox.globalToLocal(details.globalPosition);
+                              
+                              // Calculate relative position within the plan container
+                              final newX = (localPosition.dx / planBox.size.width).clamp(0.0, 1.0);
+                              final newY = (localPosition.dy / planBox.size.height).clamp(0.0, 1.0);
+                              
+                              _addPin(newX, newY);
+                            }
+                          }
+                        },
+              child: Center(
+                          child: Image.file(
+                            File(currentPlanImage.imagePath),
                     fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) {
-                      return const Center(
-                        child: Icon(
-                          Icons.broken_image,
-                          size: 100,
-                          color: Colors.white54,
+                            width: double.infinity,
+                            height: double.infinity,
+                          ),
                         ),
-                      );
-                    },
-                  ),
-                  // Pins overlay (inside InteractiveViewer so they move with image)
-                  if (index == _currentIndex)
-                    ..._pins.map((pin) {
-                      // Building-specific numbering: find this pin's index in all building pins
-                      final pinIndex = _allBuildingPins.indexWhere((p) => p.id == pin.id) + 1;
-                      return Positioned(
-                        left: pin.x * constraints.maxWidth - 15,
-                        top: pin.y * constraints.maxHeight - 30,
-                        child: _moveMode
-                            ? Draggable<Pin>(
-                                data: pin,
-                                feedback: Opacity(
-                                  opacity: 0.7,
-                                  child: _buildPinWidget(pin, constraints, pinIndex),
-                                ),
-                                childWhenDragging: Opacity(
-                                  opacity: 0.3,
-                                  child: _buildPinWidget(pin, constraints, pinIndex),
-                                ),
-                                onDragEnd: (details) async {
-                                // Convert global position to local
-                                final RenderBox box = context.findRenderObject() as RenderBox;
-                                final localPosition = box.globalToLocal(details.offset);
-                                
-                                // Normalize coordinates
-                                final x = (localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0);
-                                final y = (localPosition.dy / constraints.maxHeight).clamp(0.0, 1.0);
-                                
-                                // Update pin position
-                                final updatedPin = Pin(
+                      ),
+                      
+                      // Pins on the image (inside InteractiveViewer)
+                      ..._pins.map((pin) => Positioned(
+                        left: (pin.x * MediaQuery.of(context).size.width - 15).clamp(0.0, MediaQuery.of(context).size.width - 30),
+                        top: (pin.y * planHeight - 15).clamp(0.0, planHeight - 30),
+                        child: GestureDetector(
+                          onTap: () {
+                            if (_currentMode == 'delete') {
+                              _showDeleteConfirmation(pin);
+                            } else if (_currentMode == 'normal') {
+                              // Scroll to pin in the list
+                              _scrollToPin(pin);
+                            }
+                          },
+                          onPanStart: (details) {
+                            if (_currentMode == 'move') {
+                              setState(() {
+                                _draggingPin = pin;
+                              });
+                            }
+                          },
+                          onPanUpdate: (details) {
+                            if (_currentMode == 'move' && _draggingPin?.id == pin.id) {
+                              // Use the pin's current position as offset to prevent jumping
+                              final currentPin = _pins.firstWhere((p) => p.id == pin.id);
+                              final deltaX = details.delta.dx / MediaQuery.of(context).size.width;
+                              final deltaY = details.delta.dy / planHeight;
+                              
+                              final newX = (currentPin.x + deltaX).clamp(0.0, 1.0);
+                              final newY = (currentPin.y + deltaY).clamp(0.0, 1.0);
+                              
+                              setState(() {
+                                final index = _pins.indexWhere((p) => p.id == pin.id);
+                                if (index != -1) {
+                                  _pins[index] = Pin(
                                   id: pin.id,
                                   planImageId: pin.planImageId,
-                                  x: x,
-                                  y: y,
+                                    x: newX,
+                                    y: newY,
                                   title: pin.title,
                                   description: pin.description,
                                   assignedTo: pin.assignedTo,
                                   status: pin.status,
                                   createdAt: pin.createdAt,
                                 );
-                                
-                                  await DatabaseService.instance.update('pins', updatedPin.toMap(), pin.id!);
-                                  _loadPins();
-                                },
-                                child: _buildPinWidget(pin, constraints, pinIndex),
-                              )
-                            : GestureDetector(
-                                onTap: () => _onPinTap(pin, pinIndex),
-                                child: _buildPinWidget(pin, constraints, pinIndex),
+                                }
+                              });
+                            }
+                          },
+                          onPanEnd: (details) {
+                            if (_draggingPin != null && _draggingPin!.id == pin.id && _currentMode == 'move') {
+                              // Save final position to database
+                              final finalPin = _pins.firstWhere((p) => p.id == pin.id);
+                              _updatePinPosition(finalPin, finalPin.x, finalPin.y);
+                              _draggingPin = null;
+                            }
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            width: _draggingPin?.id == pin.id ? 40 : 30,
+                            height: _draggingPin?.id == pin.id ? 40 : 30,
+                  decoration: BoxDecoration(
+                              color: _getPinColor(pin),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: _draggingPin?.id == pin.id ? Colors.yellow : Colors.white, 
+                                width: _draggingPin?.id == pin.id ? 3 : 2,
                               ),
-                      );
-                    }).toList(),
-                ],
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(_draggingPin?.id == pin.id ? 0.6 : 0.3),
+                                  blurRadius: _draggingPin?.id == pin.id ? 8 : 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '${_pins.indexOf(pin) + 1}',
+                                    style: TextStyle(
+                      color: Colors.white,
+                                      fontSize: _draggingPin?.id == pin.id ? 16 : 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  // Show category status indicator
+                                  if (_currentMode == 'normal' && _draggingPin?.id != pin.id) ...[
+                                    const SizedBox(height: 1),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        // Before indicator
+                                        Container(
+                                          width: 3,
+                                          height: 3,
+                                          decoration: BoxDecoration(
+                                            color: (_pinPhotos[pin.id] ?? [])
+                                                .any((photo) => photo['category'] == 'before')
+                                                ? Colors.white
+                                                : Colors.white.withOpacity(0.3),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 1),
+                                        // During indicator
+                                        Container(
+                                          width: 3,
+                                          height: 3,
+                                          decoration: BoxDecoration(
+                                            color: (_pinPhotos[pin.id] ?? [])
+                                                .any((photo) => photo['category'] == 'during')
+                                                ? Colors.white
+                                                : Colors.white.withOpacity(0.3),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 1),
+                                        // After indicator
+                                        Container(
+                                          width: 3,
+                                          height: 3,
+                                          decoration: BoxDecoration(
+                                            color: (_pinPhotos[pin.id] ?? [])
+                                                .any((photo) => photo['category'] == 'after')
+                                                ? Colors.white
+                                                : Colors.white.withOpacity(0.3),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                    ),
+                  ),
+                ),
+                        ),
+                      )),
+                    ],
               ),
             ),
-          ),
-        );
-      },
-    );
-  }
 
-  Future<void> _handleTapOnPlanFixed(double x, double y) async {
-    if (_annotateMode) {
-      // Add new pin
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PinDetailScreen(
-            planImage: widget.planImages[_currentIndex],
-            x: x,
-            y: y,
-            pinNumber: _allBuildingPins.length + 1, // Next number for this building
-          ),
-        ),
-      );
-
-      if (result == true) {
-        _loadPinsForBuilding(); // Reload building pins first
-        _loadPins();
+                // Pin Control Menu (Bottom Right)
+                Positioned(
+                  bottom: 20,
+                  right: 20,
+                  child: GestureDetector(
+                    onTap: () {
+                      // Close menu when tapping outside
+                      if (_showMenu) {
         setState(() {
-          _annotateMode = false;
-        });
-      }
-    } else if (_moveMode && _selectedPinToMove != null) {
-      // Move selected pin
-      final updatedPin = Pin(
-        id: _selectedPinToMove!.id,
-        planImageId: _selectedPinToMove!.planImageId,
-        x: x,
-        y: y,
-        title: _selectedPinToMove!.title,
-        description: _selectedPinToMove!.description,
-        assignedTo: _selectedPinToMove!.assignedTo,
-        status: _selectedPinToMove!.status,
-        createdAt: _selectedPinToMove!.createdAt,
-      );
-      
-      await DatabaseService.instance.update('pins', updatedPin.toMap(), _selectedPinToMove!.id!);
-      
+                          _showMenu = false;
+                        });
+                      }
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Mode Indicator
+                        if (_currentMode != 'normal')
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: _getModeColor(),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              _getModeText(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        
+                        // Menu Button
+                        FloatingActionButton(
+                          onPressed: () {
       setState(() {
-        _selectedPinToMove = null;
-        _moveMode = false;
-      });
-      
-      _loadPins();
-    }
-  }
-
-  Widget _buildPinWidget(Pin pin, BoxConstraints constraints, int pinNumber) {
-    return Container(
-      width: 30,
-      height: 30,
-      decoration: BoxDecoration(
-        color: _selectedPinToMove?.id == pin.id 
-            ? Colors.blue 
-            : pin.getStatusColor(),
-        shape: BoxShape.circle,
-        border: _selectedPinToMove?.id == pin.id
-            ? Border.all(color: Colors.white, width: 2)
-            : null,
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black54,
-            blurRadius: 6,
-            offset: Offset(0, 2),
+                              _showMenu = !_showMenu;
+                            });
+                          },
+                          backgroundColor: _currentMode != 'normal' ? _getModeColor() : Colors.blue,
+                          child: Icon(
+                            _getModeIcon(),
+                            color: Colors.white,
+                          ),
+                        ),
+                        
+                        // Menu Items
+                        if (_showMenu) ...[
+                          const SizedBox(height: 10),
+                          // Add Pin
+                          FloatingActionButton.small(
+                            onPressed: () => _setMode('add'),
+                            backgroundColor: _currentMode == 'add' ? Colors.green[700] : Colors.green,
+                            child: const Icon(Icons.add, color: Colors.white),
+                          ),
+                          const SizedBox(height: 8),
+                          // Move Pin
+                          FloatingActionButton.small(
+                            onPressed: () => _setMode('move'),
+                            backgroundColor: _currentMode == 'move' ? Colors.orange[700] : Colors.orange,
+                            child: const Icon(Icons.open_with, color: Colors.white),
+                          ),
+                          const SizedBox(height: 8),
+                          // Delete Pin
+                          FloatingActionButton.small(
+                            onPressed: () => _setMode('delete'),
+                            backgroundColor: _currentMode == 'delete' ? Colors.red[700] : Colors.red,
+                            child: const Icon(Icons.delete, color: Colors.white),
+                          ),
+                          const SizedBox(height: 8),
+                          // Normal Mode
+                          FloatingActionButton.small(
+                            onPressed: () => _setMode('normal'),
+                            backgroundColor: _currentMode == 'normal' ? Colors.blue[700] : Colors.blue,
+                            child: const Icon(Icons.touch_app, color: Colors.white),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
+          
+          // Pin List Section (Lower Half)
+          Expanded(
+            child: Container(
+              color: Colors.white,
+              child: Column(
+                children: [
+                      Expanded(
+                        child: ListView.builder(
+                          controller: _pinListController,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: _pins.length,
+                      itemBuilder: (context, index) {
+                        final pin = _pins[index];
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
+                                // Pin Number
+                                Container(
+                                  width: 40,
+                                  height: 40,
+      decoration: BoxDecoration(
+                                    color: Colors.blue,
+        shape: BoxShape.circle,
       ),
       child: Center(
         child: Text(
-          '$pinNumber',
+                                      '${index + 1}',
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 12,
+                                        fontSize: 16,
             fontWeight: FontWeight.bold,
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildMenuButton(IconData icon, String label, VoidCallback onPressed, {Color? color}) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(8),
-      elevation: 4,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                ),
+                                const SizedBox(width: 16),
+                                
+                                // Photo Grid (Scrollable) - Sorted by category
+                                Expanded(
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 20, color: color ?? Colors.black87),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: color ?? Colors.black87,
+                                        // Show photos sorted by category: before, during, after
+                                        ...['before', 'during', 'after'].expand((category) {
+                                          final categoryPhotos = (_pinPhotos[pin.id] ?? [])
+                                              .where((photo) => photo['category'] == category)
+                                              .toList();
+                                          
+                                          return categoryPhotos.map((photo) {
+                                            return GestureDetector(
+                                              onTap: () => _showFullScreenImage(photo['image_path']),
+                                              onLongPress: () => _showPhotoOptionsDialog(pin, photo),
+                                              child: Container(
+                                                width: 50,
+                                                height: 50,
+                                                margin: const EdgeInsets.only(right: 6),
+                                                decoration: BoxDecoration(
+                                                  borderRadius: BorderRadius.circular(6),
+                                                  border: Border.all(
+                                                    color: _getCategoryColor(photo['category']),
+                                                    width: 3,
+                                                  ),
+                                                ),
+                                                child: ClipRRect(
+                                                  borderRadius: BorderRadius.circular(3),
+                                                  child: Image.file(
+                                                    File(photo['image_path']),
+                                                    fit: BoxFit.cover,
+                                                    errorBuilder: (context, error, stackTrace) {
+                                                      return Container(
+                                                        color: Colors.grey[300],
+                                                        child: const Icon(Icons.image, color: Colors.grey, size: 20),
+                                                      );
+                                                    },
+                                                  ),
+                                                ),
+                                              ),
+                                            );
+                                          });
+                                        }),
+                                        
+                                        // Add Photo Button (always visible)
+                                        Container(
+                                          width: 50,
+                                          height: 50,
+                                          margin: const EdgeInsets.only(right: 6),
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey[200],
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(color: Colors.grey[300]!),
+                                          ),
+                                          child: IconButton(
+                                            onPressed: () => _addPhotoToPin(pin),
+                                            icon: const Icon(Icons.add, color: Colors.grey, size: 20),
+                                            padding: EdgeInsets.zero,
                 ),
               ),
             ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 10,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildNavItem(0, Icons.dashboard, 'Dashboard'),
+                _buildNavItem(1, Icons.business, 'Projects'),
+                _buildNavItem(2, Icons.access_time, 'TimeSheet'),
+                _buildNavItem(3, Icons.photo_camera, 'Photos'),
+                _buildNavItem(4, Icons.people, 'Team'),
+              ],
+            ),
           ),
         ),
       ),

@@ -19,7 +19,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 18, // Added job status and user roles
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -31,11 +31,147 @@ class DatabaseService {
       await db.execute('''
 CREATE TABLE plan_images (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  plan_id INTEGER NOT NULL,
+  job_id INTEGER NOT NULL,
   image_path TEXT NOT NULL,
   name TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  FOREIGN KEY (job_id) REFERENCES plans (id) ON DELETE CASCADE
+)
+''');
+    }
+    if (oldVersion < 10) {
+      // Add sync metadata columns to projects table
+      await db.execute('ALTER TABLE projects ADD COLUMN baserow_id INTEGER');
+      await db.execute('ALTER TABLE projects ADD COLUMN sync_status TEXT DEFAULT "synced"');
+      await db.execute('ALTER TABLE projects ADD COLUMN last_sync TEXT');
+      await db.execute('ALTER TABLE projects ADD COLUMN needs_sync INTEGER DEFAULT 0');
+    }
+    if (oldVersion < 16) {
+      // Fix plan_images table schema - change plan_id to job_id
+      await db.execute('DROP TABLE IF EXISTS plan_images');
+      await db.execute('''
+CREATE TABLE plan_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id INTEGER NOT NULL,
+  image_path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  baserow_id INTEGER,
+  sync_status TEXT DEFAULT 'synced',
+  last_sync TEXT,
+  needs_sync INTEGER DEFAULT 0,
+  FOREIGN KEY (job_id) REFERENCES plans (id) ON DELETE CASCADE
+)
+''');
+    }
+    if (oldVersion < 17) {
+      // Enable foreign key constraints and add cascade delete
+      await db.execute('PRAGMA foreign_keys = ON');
+      
+      // Recreate tables with proper cascade delete
+      await db.execute('DROP TABLE IF EXISTS timesheets');
+      await db.execute('''
+CREATE TABLE timesheets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  plan_id INTEGER,
+  user_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  notes TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
   FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE CASCADE
+)
+''');
+      
+      await db.execute('DROP TABLE IF EXISTS tasks');
+      await db.execute('''
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT DEFAULT 'Open',
+  priority TEXT DEFAULT 'Medium',
+  assignee TEXT,
+  due_date TEXT,
+  location TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+)
+''');
+      
+      await db.execute('DROP TABLE IF EXISTS photos');
+      await db.execute('''
+CREATE TABLE photos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  task_id INTEGER,
+  uri TEXT NOT NULL,
+  title TEXT,
+  description TEXT,
+  latitude REAL,
+  longitude REAL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+)
+''');
+      
+      // Recreate plans table with cascade delete
+      await db.execute('DROP TABLE IF EXISTS plans');
+      await db.execute('''
+CREATE TABLE plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  job_number TEXT NOT NULL UNIQUE,
+  name TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  baserow_id INTEGER,
+  sync_status TEXT DEFAULT 'synced',
+  last_sync TEXT,
+  needs_sync INTEGER DEFAULT 0,
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+)
+''');
+    }
+
+    if (oldVersion < 18) {
+      // Add job status and user management
+      await db.execute('PRAGMA foreign_keys = ON');
+      
+      // Add status column to plans table (jobs)
+      await db.execute('ALTER TABLE plans ADD COLUMN status TEXT DEFAULT "pending"');
+      await db.execute('ALTER TABLE plans ADD COLUMN description TEXT');
+      await db.execute('ALTER TABLE plans ADD COLUMN assigned_to TEXT');
+      await db.execute('ALTER TABLE plans ADD COLUMN due_date TEXT');
+      
+      // Create users table
+      await db.execute('''
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)
+''');
+      
+      // Create pending_changes table for simple sync
+      await db.execute('''
+CREATE TABLE pending_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at TEXT NOT NULL
 )
 ''');
     }
@@ -93,12 +229,51 @@ CREATE TABLE timesheets (
 )
 ''');
     }
+    if (oldVersion < 7) {
+      // Add pin_photos table
+      await db.execute('''
+CREATE TABLE pin_photos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pin_id INTEGER NOT NULL,
+  image_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (pin_id) REFERENCES pins (id) ON DELETE CASCADE
+)
+''');
+    }
+    if (oldVersion < 8) {
+      // Add category column to pin_photos table
+      await db.execute('ALTER TABLE pin_photos ADD COLUMN category TEXT DEFAULT "before"');
+    }
+    if (oldVersion < 9) {
+      // Add timesheets table if it doesn't exist
+      await db.execute('''
+CREATE TABLE IF NOT EXISTS timesheets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  plan_id INTEGER,
+  user_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  notes TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects (id),
+  FOREIGN KEY (plan_id) REFERENCES plans (id)
+)
+''');
+    }
   }
 
   Future _createDB(Database db, int version) async {
     const idType = 'INTEGER PRIMARY KEY AUTOINCREMENT';
     const textType = 'TEXT NOT NULL';
     const intType = 'INTEGER NOT NULL';
+
+    // Enable foreign key constraints
+    await db.execute('PRAGMA foreign_keys = ON');
 
     // Projects table
     await db.execute('''
@@ -111,7 +286,11 @@ CREATE TABLE projects (
   end_date TEXT,
   description TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  baserow_id INTEGER,
+  sync_status TEXT DEFAULT 'synced',
+  last_sync TEXT,
+  needs_sync INTEGER DEFAULT 0
 )
 ''');
 
@@ -129,7 +308,7 @@ CREATE TABLE tasks (
   location TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects (id)
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
 )
 ''');
 
@@ -145,21 +324,44 @@ CREATE TABLE photos (
   latitude REAL,
   longitude REAL,
   created_at TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects (id),
-  FOREIGN KEY (task_id) REFERENCES tasks (id)
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
 )
 ''');
 
     // Plans table
     await db.execute('''
-CREATE TABLE plans (
+CREATE TABLE IF NOT EXISTS plans (
   id $idType,
   project_id $intType,
-  job_number $textType,
+  job_number $textType UNIQUE,
   name TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects (id)
+  baserow_id INTEGER,
+  sync_status TEXT DEFAULT 'synced',
+  last_sync TEXT,
+  needs_sync INTEGER DEFAULT 0,
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+)
+''');
+
+    // Timesheets table
+    await db.execute('''
+CREATE TABLE timesheets (
+  id $idType,
+  project_id $intType,
+  plan_id INTEGER,
+  user_id $textType,
+  date TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  notes TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+  FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE CASCADE
 )
 ''');
 
@@ -167,11 +369,16 @@ CREATE TABLE plans (
     await db.execute('''
 CREATE TABLE plan_images (
   id $idType,
-  plan_id $intType,
+  job_id $intType,
   image_path $textType,
   name $textType,
   created_at TEXT NOT NULL,
-  FOREIGN KEY (plan_id) REFERENCES plans (id) ON DELETE CASCADE
+  updated_at TEXT NOT NULL,
+  baserow_id INTEGER,
+  sync_status TEXT DEFAULT 'synced',
+  last_sync TEXT,
+  needs_sync INTEGER DEFAULT 0,
+  FOREIGN KEY (job_id) REFERENCES plans (id) ON DELETE CASCADE
 )
 ''');
 
@@ -220,25 +427,6 @@ CREATE TABLE files (
 )
 ''');
 
-    // Timesheets table
-    await db.execute('''
-CREATE TABLE timesheets (
-  id $idType,
-  project_id $intType,
-  plan_id INTEGER,
-  user_id $textType,
-  date TEXT NOT NULL,
-  start_time TEXT NOT NULL,
-  end_time TEXT NOT NULL,
-  notes TEXT,
-  status TEXT DEFAULT 'pending',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects (id),
-  FOREIGN KEY (plan_id) REFERENCES plans (id)
-)
-''');
-
     // Team members table
     await db.execute('''
 CREATE TABLE team_members (
@@ -261,9 +449,21 @@ CREATE TABLE pins (
   title $textType,
   description TEXT,
   assigned_to TEXT,
-  status TEXT DEFAULT 'Priority 2',
+  status TEXT DEFAULT 'Open',
   created_at TEXT NOT NULL,
   FOREIGN KEY (plan_image_id) REFERENCES plan_images (id) ON DELETE CASCADE
+)
+''');
+
+    // Pin Photos table
+    await db.execute('''
+CREATE TABLE pin_photos (
+  id $idType,
+  pin_id $intType,
+  image_path $textType,
+  category TEXT DEFAULT 'before',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (pin_id) REFERENCES pins (id) ON DELETE CASCADE
 )
 ''');
 
@@ -272,53 +472,109 @@ CREATE TABLE pins (
 CREATE TABLE pin_comments (
   id $idType,
   pin_id $intType,
-  type $textType,
-  text TEXT,
-  image_path TEXT,
+  user_id $textType,
+  comment $textType,
   created_at TEXT NOT NULL,
   FOREIGN KEY (pin_id) REFERENCES pins (id) ON DELETE CASCADE
 )
 ''');
 
-    // Timesheets table
+    // Pending Changes table
     await db.execute('''
-CREATE TABLE timesheets (
+CREATE TABLE pending_changes (
   id $idType,
-  project_id $intType,
-  plan_id INTEGER,
-  user_id $textType,
-  date TEXT NOT NULL,
-  start_time TEXT NOT NULL,
-  end_time TEXT NOT NULL,
-  notes TEXT,
-  status TEXT DEFAULT 'pending',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects (id),
-  FOREIGN KEY (plan_id) REFERENCES plans (id)
+  action $textType,
+  data $textType,
+  created_at TEXT NOT NULL
 )
 ''');
+
+    // Sync Settings table
+    await db.execute('''
+CREATE TABLE sync_settings (
+  id $idType,
+  key TEXT UNIQUE NOT NULL,
+  value $textType
+)
+''');
+
   }
 
-  // Generic CRUD operations
+  // Generic CRUD operations with error handling
   Future<int> insert(String table, Map<String, dynamic> data) async {
-    final db = await database;
-    return await db.insert(table, data);
+    try {
+      final db = await database;
+      return await db.insert(table, data);
+    } catch (e) {
+      throw Exception('Failed to insert into $table: $e');
+    }
   }
 
   Future<List<Map<String, dynamic>>> query(String table, {String? where, List<dynamic>? whereArgs}) async {
-    final db = await database;
-    return await db.query(table, where: where, whereArgs: whereArgs);
+    try {
+      final db = await database;
+      return await db.query(table, where: where, whereArgs: whereArgs);
+    } catch (e) {
+      throw Exception('Failed to query $table: $e');
+    }
   }
 
   Future<int> update(String table, Map<String, dynamic> data, int id) async {
-    final db = await database;
-    return await db.update(table, data, where: 'id = ?', whereArgs: [id]);
+    try {
+      final db = await database;
+      return await db.update(table, data, where: 'id = ?', whereArgs: [id]);
+    } catch (e) {
+      throw Exception('Failed to update $table: $e');
+    }
   }
 
   Future<int> delete(String table, int id) async {
-    final db = await database;
-    return await db.delete(table, where: 'id = ?', whereArgs: [id]);
+    try {
+      final db = await database;
+      return await db.delete(table, where: 'id = ?', whereArgs: [id]);
+    } catch (e) {
+      throw Exception('Failed to delete from $table: $e');
+    }
+  }
+
+  // Batch operations for better performance
+  Future<void> batchInsert(String table, List<Map<String, dynamic>> dataList) async {
+    try {
+      final db = await database;
+      final batch = db.batch();
+      for (final data in dataList) {
+        batch.insert(table, data);
+      }
+      await batch.commit();
+    } catch (e) {
+      throw Exception('Failed to batch insert into $table: $e');
+    }
+  }
+
+  // Clear all data (for debugging/reset)
+  Future<void> clearAllData() async {
+    try {
+      final db = await database;
+      final batch = db.batch();
+      
+      // Delete in correct order to respect foreign keys
+      batch.delete('pin_comments');
+      batch.delete('pins');
+      batch.delete('plan_images');
+      batch.delete('timesheets');
+      batch.delete('plans');
+      batch.delete('projects');
+      batch.delete('tasks');
+      batch.delete('photos');
+      batch.delete('forms');
+      batch.delete('punch_list');
+      batch.delete('files');
+      batch.delete('team_members');
+      
+      await batch.commit();
+    } catch (e) {
+      throw Exception('Failed to clear data: $e');
+    }
   }
 
   Future close() async {

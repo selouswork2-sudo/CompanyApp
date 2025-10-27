@@ -1,12 +1,15 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../services/database_service.dart';
+import '../services/sync_service.dart';
 import '../models/project.dart';
 import '../models/plan.dart';
 import '../models/pin.dart';
 import '../models/plan_image.dart';
 import '../models/pin_comment.dart';
+import '../theme/app_theme.dart';
 import 'job_plans_screen.dart';
 import 'pin_detail_screen.dart';
 
@@ -41,6 +44,7 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
     _loadProject();
     _loadPlans();
   }
+
 
   Future<void> _loadProject() async {
     final maps = await DatabaseService.instance.query(
@@ -81,117 +85,73 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
 
     return WillPopScope(
       onWillPop: () async {
-        // Go back to projects list instead of closing app
+        // Go back to projects list
         context.go('/projects');
         return false;
       },
       child: Scaffold(
+        backgroundColor: AppTheme.backgroundColor,
         appBar: AppBar(
-          title: Text(_project?.name ?? 'Building'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.home),
+          backgroundColor: Colors.white,
+          foregroundColor: AppTheme.textPrimary,
+          elevation: 0,
+          systemOverlayStyle: SystemUiOverlayStyle.dark,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
             onPressed: () => context.go('/projects'),
           ),
-          IconButton(
-            icon: const Icon(Icons.search),
-            onPressed: () {
-              // TODO: Search functionality
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () {
-              _showAddDialog();
-            },
-          ),
-        ],
-      ),
-      drawer: Drawer(
-        width: MediaQuery.of(context).size.width * 0.6, // 60% of screen width
-        child: Container(
-          color: const Color(0xFF2C2C2E),
-          child: ListView(
-            padding: EdgeInsets.zero,
+          title: Row(
             children: [
-              DrawerHeader(
-                decoration: const BoxDecoration(
-                  color: Color(0xFF1C1C1E),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  gradient: AppTheme.primaryGradient,
+                  borderRadius: BorderRadius.circular(12),
                 ),
+                child: const Icon(Icons.business, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    const Icon(Icons.business, size: 40, color: Colors.white),
-                    const SizedBox(height: 12),
                     Text(
                       _project?.name ?? 'Building',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
                         fontSize: 18,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
-                    if (_project?.address != null)
+                    if (_project?.address != null && _project!.address!.isNotEmpty)
                       Text(
                         _project!.address!,
-                        style: const TextStyle(
-                          color: Colors.white60,
-                          fontSize: 13,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textSecondary,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                   ],
                 ),
               ),
-              ..._menuItems.map((item) => Container(
-                    color: _selectedMenu == item.title
-                        ? const Color(0xFF0A84FF).withOpacity(0.3)
-                        : Colors.transparent,
-                    child: ListTile(
-                      leading: Icon(
-                        item.icon,
-                        color: Colors.white,
-                        size: 24,
-                      ),
-                      title: Text(
-                        item.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                        ),
-                      ),
-                      selected: _selectedMenu == item.title,
-                      onTap: () {
-                        setState(() {
-                          _selectedMenu = item.title;
-                        });
-                        Navigator.pop(context);
-                      },
-                    ),
-                  )),
-              const Divider(color: Colors.white24, height: 1),
-              const Padding(
-                padding: EdgeInsets.all(16.0),
-                child: Text(
-                  'Tasks',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              _buildTaskMenuItem('My tasks', Icons.star, 0),
-              _buildTaskMenuItem('Watched tasks', Icons.remove_red_eye, 0),
-              _buildTaskMenuItem('All tasks', Icons.apps, 0),
             ],
           ),
+          actions: [
+            Container(
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.backgroundColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: IconButton(
+                icon: Icon(Icons.add, color: AppTheme.primaryBlue),
+                onPressed: () {
+                  _showAddDialog();
+                },
+              ),
+            ),
+          ],
         ),
-      ),
       body: SafeArea(
         child: _buildContent(),
       ),
@@ -264,10 +224,17 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
       );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _plans.length,
-      itemBuilder: (context, index) {
+    return RefreshIndicator(
+      onRefresh: () async {
+        // Trigger sync when user pulls to refresh
+        await SyncService.performFullSync();
+        // Reload the plans after sync
+        await _loadPlans();
+      },
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _plans.length,
+        itemBuilder: (context, index) {
         final plan = _plans[index];
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
@@ -335,6 +302,7 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
           ),
         );
       },
+      ),
     );
   }
 
@@ -347,6 +315,22 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            InkWell(
+              onTap: () {
+                Navigator.pop(context);
+                _showEditJobNumberDialog(plan);
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  children: const [
+                    Icon(Icons.edit, color: Colors.blue),
+                    SizedBox(width: 12),
+                    Text('Edit', style: TextStyle(color: Colors.blue, fontSize: 16)),
+                  ],
+                ),
+              ),
+            ),
             InkWell(
               onTap: () {
                 Navigator.pop(context);
@@ -383,7 +367,17 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(context);
-              await DatabaseService.instance.delete('plans', plan.id!);
+              
+              // Use SyncService to delete job locally and queue for sync
+              await SyncService.deleteJobLocally(plan);
+              
+              // Trigger background sync immediately
+              SyncService.performFullSync().then((_) {
+                print('✅ Background sync completed after job deletion');
+              }).catchError((error) {
+                print('⚠️ Background sync failed: $error');
+              });
+              
               if (mounted) {
                 _loadPlans();
               }
@@ -540,21 +534,22 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
                      onTap: () async {
                        // Navigate to pin detail
                        final result = await Navigator.push(
-                         context,
-                         MaterialPageRoute(
-                           builder: (context) => PinDetailScreen(
-                             pin: pin,
-                             planImage: planImage,
-                             x: pin.x,
-                             y: pin.y,
-                             pinNumber: buildingPinNumber,
+                           context,
+                           MaterialPageRoute(
+                             builder: (context) => PinDetailScreen(
+                               pin: pin,
+                               planImage: planImage,
+                               x: pin.x,
+                               y: pin.y,
+                               pinNumber: buildingPinNumber,
+                             ),
                            ),
-                         ),
-                       );
+                         );
                        if (result == true) {
                          setState(() {}); // Refresh
                        }
                      },
+                     onLongPress: () => _showPinContextMenu(pin, planImage, plan, buildingPinNumber),
                      child: Padding(
                        padding: const EdgeInsets.all(12),
                        child: Row(
@@ -610,9 +605,110 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
                const SizedBox(height: 8),
              ],
            );
-         }
+  }
 
-         Widget _buildPhotosList() {
+  void _showPinContextMenu(Pin pin, PlanImage planImage, Plan plan, int buildingPinNumber) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit, color: Colors.blue),
+              title: const Text('Edit Pin'),
+              onTap: () {
+                Navigator.pop(context);
+                // Navigate to pin detail for editing
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => PinDetailScreen(
+                      pin: pin,
+                      planImage: planImage,
+                      x: pin.x,
+                      y: pin.y,
+                      pinNumber: buildingPinNumber,
+                    ),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: const Text('Delete Pin'),
+              onTap: () {
+                Navigator.pop(context);
+                _deletePin(pin);
+              },
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deletePin(Pin pin) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Pin'),
+        content: Text('Are you sure you want to delete pin "${pin.title}"? This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await DatabaseService.instance.delete('pins', pin.id!);
+        setState(() {}); // Refresh the UI
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Pin "${pin.title}" deleted'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error deleting pin: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Widget _buildPhotosList() {
            // Show all photos from all pins in this project
            return FutureBuilder<Map<String, List<PinComment>>>(
              future: _loadAllPhotosForProject(),
@@ -873,6 +969,18 @@ class _BuildingDetailScreenState extends State<BuildingDetailScreen> {
       ),
     );
   }
+
+  void _showEditJobNumberDialog(Plan plan) {
+    showDialog(
+      context: context,
+      builder: (context) => EditJobNumberDialog(
+        plan: plan,
+        onJobNumberUpdated: () {
+          _loadPlans();
+        },
+      ),
+    );
+  }
 }
 
 class MenuItem {
@@ -880,6 +988,185 @@ class MenuItem {
   final String title;
 
   MenuItem({required this.icon, required this.title});
+}
+
+class EditJobNumberDialog extends StatefulWidget {
+  final Plan plan;
+  final VoidCallback onJobNumberUpdated;
+
+  const EditJobNumberDialog({
+    super.key,
+    required this.plan,
+    required this.onJobNumberUpdated,
+  });
+
+  @override
+  State<EditJobNumberDialog> createState() => _EditJobNumberDialogState();
+}
+
+class _EditJobNumberDialogState extends State<EditJobNumberDialog> {
+  final _jobNumberController = TextEditingController();
+  final _nameController = TextEditingController();
+  bool _isUpdating = false;
+  String _errorText = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _jobNumberController.text = widget.plan.jobNumber;
+    _nameController.text = widget.plan.name ?? '';
+  }
+
+  @override
+  void dispose() {
+    _jobNumberController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _updateJobNumber() async {
+    final jobNumber = _jobNumberController.text.trim();
+    final name = _nameController.text.trim();
+
+    if (jobNumber.isEmpty) {
+      setState(() {
+        _errorText = 'Job Number cannot be empty';
+        _isUpdating = false;
+      });
+      return;
+    }
+
+    if (!Plan.isValidJobNumber(jobNumber)) {
+      setState(() {
+        _errorText = 'Invalid job number format. Use JXXXX.X.X (e.g., J1441.4.1)';
+        _isUpdating = false;
+      });
+      return;
+    }
+
+    // Check if job number already exists (excluding current plan)
+    try {
+      final existingPlans = await DatabaseService.instance.query(
+        'plans',
+        where: 'job_number = ? AND id != ?',
+        whereArgs: [jobNumber, widget.plan.id],
+      );
+
+      if (existingPlans.isNotEmpty) {
+        setState(() {
+          _errorText = 'Job Number $jobNumber already exists!';
+          _isUpdating = false;
+        });
+        return;
+      }
+    } catch (e) {
+      setState(() {
+        _errorText = 'Error checking job number: $e';
+        _isUpdating = false;
+      });
+      return;
+    }
+
+    try {
+      final updatedPlan = Plan(
+        id: widget.plan.id,
+        projectId: widget.plan.projectId,
+        jobNumber: jobNumber,
+        name: name.isEmpty ? null : name,
+        createdAt: widget.plan.createdAt,
+        updatedAt: DateTime.now(),
+        // Preserve sync metadata
+        baserowId: widget.plan.baserowId,
+        syncStatus: widget.plan.syncStatus,
+        lastSync: widget.plan.lastSync,
+        needsSync: widget.plan.needsSync,
+      );
+
+      // Use SyncService to update job locally and queue for sync
+      await SyncService.updateJobLocally(updatedPlan);
+      
+      // Trigger background sync immediately
+      SyncService.performFullSync().then((_) {
+        print('✅ Background sync completed after job update');
+      }).catchError((error) {
+        print('⚠️ Background sync failed: $error');
+      });
+      
+      widget.onJobNumberUpdated();
+      Navigator.pop(context);
+    } catch (e) {
+      setState(() {
+        _errorText = 'Error updating job number';
+        _isUpdating = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit Job Number'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _jobNumberController,
+            decoration: const InputDecoration(
+              labelText: 'Job Number',
+              hintText: 'JXXXX.X.X (e.g., J1441.4.1)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _nameController,
+            decoration: const InputDecoration(
+              labelText: 'Name (Optional)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Format: JXXXX.X.X',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const Text(
+            'Example: J1441.4.1',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          if (_errorText.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _errorText,
+              style: const TextStyle(color: Colors.red, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isUpdating ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _isUpdating ? null : () {
+            setState(() {
+              _isUpdating = true;
+              _errorText = '';
+            });
+            _updateJobNumber();
+          },
+          child: _isUpdating
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Update'),
+        ),
+      ],
+    );
+  }
 }
 
 class AddJobNumberDialog extends StatefulWidget {
@@ -928,15 +1215,23 @@ class _AddJobNumberDialogState extends State<AddJobNumberDialog> {
     }
 
     // Check if job number already exists globally (across all buildings)
-    final existingPlans = await DatabaseService.instance.query(
-      'plans',
-      where: 'job_number = ?',
-      whereArgs: [jobNumber],
-    );
+    try {
+      final existingPlans = await DatabaseService.instance.query(
+        'plans',
+        where: 'job_number = ?',
+        whereArgs: [jobNumber],
+      );
 
-    if (existingPlans.isNotEmpty) {
+      if (existingPlans.isNotEmpty) {
+        setState(() {
+          _errorText = 'Job Number $jobNumber already exists!';
+          _isCreating = false;
+        });
+        return;
+      }
+    } catch (e) {
       setState(() {
-        _errorText = 'Job Number $jobNumber already exists!';
+        _errorText = 'Error checking job number: $e';
         _isCreating = false;
       });
       return;
@@ -956,7 +1251,16 @@ class _AddJobNumberDialogState extends State<AddJobNumberDialog> {
     );
 
     try {
-      await DatabaseService.instance.insert('plans', newPlan.toMap());
+      // Use SyncService to create job locally and queue for sync
+      await SyncService.createJobLocally(newPlan);
+      
+      // Trigger background sync immediately
+      SyncService.performFullSync().then((_) {
+        print('✅ Background sync completed after job creation');
+      }).catchError((error) {
+        print('⚠️ Background sync failed: $error');
+      });
+      
       widget.onJobNumberCreated();
       if (context.mounted) {
         Navigator.pop(context);

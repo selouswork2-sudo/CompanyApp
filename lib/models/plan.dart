@@ -5,6 +5,11 @@ class Plan {
   final String? name;
   final DateTime createdAt;
   final DateTime updatedAt;
+  // Sync metadata
+  final int? baserowId;
+  final String? syncStatus;
+  final String? lastSync;
+  final int? needsSync;
 
   Plan({
     this.id,
@@ -13,6 +18,10 @@ class Plan {
     this.name,
     required this.createdAt,
     required this.updatedAt,
+    this.baserowId,
+    this.syncStatus,
+    this.lastSync,
+    this.needsSync,
   });
 
   Map<String, dynamic> toMap() {
@@ -23,6 +32,10 @@ class Plan {
       'name': name,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
+      'baserow_id': baserowId,
+      'sync_status': syncStatus,
+      'last_sync': lastSync,
+      'needs_sync': needsSync,
     };
   }
 
@@ -34,6 +47,10 @@ class Plan {
       name: map['name'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
       updatedAt: DateTime.parse(map['updated_at'] as String),
+      baserowId: map['baserow_id'] as int?,
+      syncStatus: map['sync_status'] as String?,
+      lastSync: map['last_sync'] as String?,
+      needsSync: map['needs_sync'] as int?,
     );
   }
 

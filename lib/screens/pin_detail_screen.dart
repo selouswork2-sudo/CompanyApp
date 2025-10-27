@@ -110,16 +110,21 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
         title: const Text('Add Comment', style: TextStyle(color: Colors.white)),
         content: TextField(
           controller: _commentController,
-          style: const TextStyle(color: Colors.white),
+          style: const TextStyle(color: Colors.black),
           decoration: const InputDecoration(
             hintText: 'Enter your comment',
-            hintStyle: TextStyle(color: Colors.white38),
-            enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: Colors.white38),
+            hintStyle: TextStyle(color: Colors.black38),
+            filled: true,
+            fillColor: Colors.white,
+            enabledBorder: OutlineInputBorder(
+              borderSide: BorderSide(color: Colors.grey),
+              borderRadius: BorderRadius.all(Radius.circular(8)),
             ),
-            focusedBorder: UnderlineInputBorder(
+            focusedBorder: OutlineInputBorder(
               borderSide: BorderSide(color: Colors.blue),
+              borderRadius: BorderRadius.all(Radius.circular(8)),
             ),
+            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           ),
           maxLines: 3,
           autofocus: true,
