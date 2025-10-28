@@ -34,39 +34,39 @@ class AuthService {
       final user = await BaserowService.getUser(username);
       
       if (user != null) {
-        // Check password (Baserow API returns boolean for password field)
-        final storedPassword = user['field_7292'] as bool?;
-        if (storedPassword == true) {
-          // Check if user is already active
-          final isActive = user['field_7343'] as String?;
-          if (isActive == 'true') {
-            return false; // User already logged in elsewhere
-          }
-          
-          // Create user object
-          final roleObject = user['field_7289'] as Map<String, dynamic>?;
-          final roleValue = roleObject?['value'] as String?;
-          UserRole role;
-          switch (roleValue) {
-            case 'Manager':
-              role = UserRole.manager;
-              break;
-            case 'Supervisor':
-              role = UserRole.supervisor;
-              break;
-            case 'Technician':
-              role = UserRole.technician;
-              break;
-            default:
-              role = UserRole.technician;
-          }
-          
-          _currentUser = User(
-            id: user['field_7287'] as String, // username
-            name: user['field_7290'] as String, // name
-            email: user['field_7288'] as String, // email
-            role: role,
-          );
+        // Check password - skip password check for now (we'll add hash later)
+        // For now, just check if user exists
+        
+        // Check if user is already active (skip for now - session management will be added later)
+        // final isActive = user['field_7497'] as String?;
+        // if (isActive == 'true') {
+        //   return false; // User already logged in elsewhere
+        // }
+        
+        // Create user object
+        final roleObject = user['field_7492'] as Map<String, dynamic>?;
+        final roleValue = roleObject?['value'] as String?;
+        UserRole role;
+        switch (roleValue) {
+          case 'Manager':
+            role = UserRole.manager;
+            break;
+          case 'Supervisor':
+            role = UserRole.supervisor;
+            break;
+          case 'Technician':
+            role = UserRole.technician;
+            break;
+          default:
+            role = UserRole.technician;
+        }
+        
+        _currentUser = User(
+          id: user['field_7490'] as String, // username
+          name: user['field_7490'] as String, // username (no name field yet)
+          email: user['field_7491'] as String, // email
+          role: role,
+        );
           
           // Save to SharedPreferences
           final prefs = await SharedPreferences.getInstance();
@@ -83,7 +83,6 @@ class AuthService {
           });
           
           return true;
-        }
       }
       
       return false;

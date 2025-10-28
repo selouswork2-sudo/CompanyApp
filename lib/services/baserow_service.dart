@@ -13,110 +13,78 @@ class BaserowService {
     'Content-Type': 'application/json',
   };
 
-  // Users Table (Table ID: 762)
-  static const int _usersTableId = 762;
-  
-  // Projects Table (Table ID: 753) - Correct table ID
-  static const int _projectsTableId = 753;
-  
-  // Jobs Table (Table ID: 754) - Corrected from 723 to 754
-  static const int _jobsTableId = 754;
-  
-  // Plans Table (Table ID: 755) - Corrected from 724 to 755
-  static const int _plansTableId = 755;
-  
-  // Photos Table (Table ID: 758)
-  static const int _photosTableId = 758;
-  
-  // Pins Table (Table ID: 759)
-  static const int _pinsTableId = 759;
-  
-  /// Get user by username
-  static Future<Map<String, dynamic>?> getUser(String username) async {
-    final url = '$_baseUrl/database/rows/table/762/?user_data=true&filters=%7B%22filter_type%22%3A%22AND%22%2C%22filters%22%3A%5B%7B%22field%22%3A7287%2C%22type%22%3A%22equal%22%2C%22value%22%3A%22$username%22%7D%5D%7D';
-    
-    print('🔍 Getting user from URL: $url');
-    print('🔑 Using token: ${_token.substring(0, 10)}...');
-    
-    final response = await http.get(Uri.parse(url), headers: _headers);
-    
-    print('📡 Response status: ${response.statusCode}');
-    print('📡 Response body: ${response.body}');
-    
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      final results = data['results'] as List;
-      if (results.isNotEmpty) {
-        return results.first as Map<String, dynamic>;
-      }
-    } else {
-      print('❌ Failed to get user: ${response.statusCode}');
-    }
-    
-    return null;
-  }
+  // Table IDs
+  static const int _usersTableId = 788;
+  static const int _projectsTableId = 783;
+  static const int _jobsTableId = 785;
+  static const int _planImagesTableId = 786;
+  static const int _pinsTableId = 787;
 
-  /// Update user session info
-  static Future<void> updateUserSession(String username, Map<String, dynamic> sessionData) async {
-    // First get user to find the row ID
-    final user = await getUser(username);
-    if (user == null) {
-      throw Exception('User not found: $username');
-    }
+  // Projects field IDs
+  static const int _fieldName = 7454;
+  static const int _fieldAddress = 7455;
+  static const int _fieldStatus = 7456;
+  static const int _fieldCreatedBy = 7457;
+  static const int _fieldCreatedAt = 7458;
+  static const int _fieldUpdatedAt = 7459;
+  static const int _fieldUuid = 7469;
 
-    final rowId = user['id'];
-    final url = '$_baseUrl/database/rows/table/$_usersTableId/$rowId/';
+  // Jobs field IDs
+  static const int _jobNumber = 7463;
+  static const int _jobName = 7464;
+  static const int _jobProjectId = 7465;
+  static const int _jobCreatedBy = 7466;
+  static const int _jobCreatedAt = 7467;
+  static const int _jobUpdatedAt = 7468;
+  static const int _jobUuid = 7487;
 
-    // Map session data to Baserow fields
-    final updateData = <String, dynamic>{};
+  // Plan Images field IDs
+  static const int _planJobNumber = 7470;
+  static const int _planImagePath = 7471;
+  static const int _planName = 7472;
+  static const int _planCreatedBy = 7473;
+  static const int _planCreatedAt = 7474;
+  static const int _planUpdatedAt = 7475;
+  static const int _planUuid = 7488;
 
-    if (sessionData.containsKey('is_active')) {
-      updateData['field_7343'] = sessionData['is_active'] ? 'true' : 'false'; // is_active (single line text)
-    }
-    if (sessionData.containsKey('last_activity')) {
-      updateData['field_7344'] = sessionData['last_activity']; // last_activity (date)
-    }
+  // Pins field IDs (updated with correct field IDs from Baserow)
+  static const int _pinJobNumber = 7476;  // job_number (field 7476)
+  static const int _pinPlanName = 7477;   // plan_name (field 7477)
+  static const int _pinX = 7478;          // x (field 7478)
+  static const int _pinY = 7479;          // y (field 7479)
+  static const int _pinTitle = 7480;      // title (field 7480)
+  static const int _pinBeforePictures = 7481;  // before_pictures (field 7481)
+  static const int _pinDuringPictures = 7482;  // during_pictures (field 7482)
+  static const int _pinAfterPictures = 7483;   // after_pictures (field 7483)
+  static const int _pinCreatedBy = 7484;        // created_by (field 7484)
+  static const int _pinCreatedAt = 7485;        // created_at (field 7485)
+  static const int _pinUpdatedAt = 7486;        // updated_at (field 7486)
+  static const int _pinUuid = 7489;             // uuid (field 7489)
 
-    final response = await http.patch(
-      Uri.parse(url),
-      headers: _headers,
-      body: json.encode(updateData),
-    );
+  // Users field IDs
+  static const int _userUsername = 7490;
+  static const int _userPassword = 7495;
+  static const int _userEmail = 7491;
+  static const int _userRole = 7492;
+  static const int _userCreatedAt = 7493;
+  static const int _userUpdatedAt = 7494;
+  static const int _userUuid = 7496;
 
-    if (response.statusCode == 200) {
-      print('✅ User session updated successfully');
-    } else {
-      print('❌ Failed to update user session: ${response.statusCode}');
-      throw Exception('Failed to update user session: ${response.statusCode}');
-    }
-  }
+  // ==================== PROJECTS CRUD ====================
 
-  /// Get all users (for testing)
-  static Future<List<Map<String, dynamic>>> getUsers() async {
-    final url = '$_baseUrl/database/rows/table/$_usersTableId/';
-    
-    final response = await http.get(Uri.parse(url), headers: _headers);
-    
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      return List<Map<String, dynamic>>.from(data['results']);
-    } else {
-      print('❌ Failed to get users: ${response.statusCode}');
-      return [];
-    }
-  }
-
-  /// ==================== PROJECT METHODS ====================
-  
   static Future<Map<String, dynamic>> createProject(Map<String, dynamic> data) async {
     final url = '$_baseUrl/database/rows/table/$_projectsTableId/';
     
-    // Map project data to Baserow fields
     final baserowData = {
-      'field_7227': data['name'], // Project name - single line text
-      'field_7228': data['address'] ?? '', // Address - single line text
-      'field_7229': data['status'] ?? 'Active', // Status - single select
+      'field_$_fieldName': data['name'] ?? '',
+      'field_$_fieldAddress': data['address'] ?? '',
+      'field_$_fieldStatus': data['status'] ?? 'Active',
+      'field_$_fieldCreatedBy': data['created_by'] ?? '',
+      'field_$_fieldCreatedAt': data['created_at'] ?? DateTime.now().toIso8601String(),
+      'field_$_fieldUpdatedAt': data['updated_at'] ?? DateTime.now().toIso8601String(),
     };
+    
+    print('🔄 Creating project in Baserow with data: $baserowData');
     
     final response = await http.post(
       Uri.parse(url),
@@ -124,11 +92,13 @@ class BaserowService {
       body: json.encode(baserowData),
     );
     
-    if (response.statusCode == 200) {
-      print('✅ Project created in Baserow');
-      return json.decode(response.body);
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      final responseData = json.decode(response.body);
+      print('✅ Project created in Baserow with ID: ${responseData['id']}');
+      return responseData;
     } else {
       print('❌ Failed to create project in Baserow: ${response.statusCode}');
+      print('❌ Response body: ${response.body}');
       throw Exception('Failed to create project: ${response.statusCode}');
     }
   }
@@ -137,9 +107,12 @@ class BaserowService {
     final url = '$_baseUrl/database/rows/table/$_projectsTableId/$baserowId/';
     
     final baserowData = <String, dynamic>{};
-    if (data.containsKey('name')) baserowData['field_7227'] = data['name']; // Project name - single line text
-    if (data.containsKey('address')) baserowData['field_7228'] = data['address']; // Address - single line text
-    if (data.containsKey('status')) baserowData['field_7229'] = data['status']; // Status - single select
+    if (data.containsKey('name')) baserowData['field_$_fieldName'] = data['name'];
+    if (data.containsKey('address')) baserowData['field_$_fieldAddress'] = data['address'];
+    if (data.containsKey('status')) baserowData['field_$_fieldStatus'] = data['status'];
+    if (data.containsKey('updated_at')) baserowData['field_$_fieldUpdatedAt'] = data['updated_at'];
+    
+    print('🔄 Updating project in Baserow with ID: $baserowId');
     
     final response = await http.patch(
       Uri.parse(url),
@@ -169,13 +142,34 @@ class BaserowService {
     }
   }
 
+  static Future<List<Map<String, dynamic>>> getProjects() async {
+    final url = '$_baseUrl/database/rows/table/$_projectsTableId/';
+    
+    final response = await http.get(Uri.parse(url), headers: _headers);
+    
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final projects = List<Map<String, dynamic>>.from(data['results']);
+      print('📥 Downloaded ${projects.length} projects from Baserow');
+      return projects;
+    } else {
+      print('❌ Failed to get projects: ${response.statusCode}');
+      return [];
+    }
+  }
+
+  // ==================== JOBS CRUD ====================
+
   static Future<Map<String, dynamic>> createJob(Map<String, dynamic> data) async {
     final url = '$_baseUrl/database/rows/table/$_jobsTableId/';
     
-    // Map job data to Baserow fields
     final baserowData = {
-      'field_7237': data['job_number'] ?? '', // Job number
-      'field_7238': data['name'] ?? '', // Name
+      'field_$_jobNumber': data['job_number'] ?? '',
+      'field_$_jobName': data['name'] ?? '',
+      'field_$_jobProjectId': data['project_id'] ?? '',
+      'field_$_jobCreatedBy': data['created_by'] ?? '',
+      'field_$_jobCreatedAt': data['created_at'] ?? DateTime.now().toIso8601String(),
+      'field_$_jobUpdatedAt': data['updated_at'] ?? DateTime.now().toIso8601String(),
     };
     
     print('🔄 Creating job in Baserow with data: $baserowData');
@@ -200,10 +194,13 @@ class BaserowService {
   static Future<void> updateJob(int baserowId, Map<String, dynamic> data) async {
     final url = '$_baseUrl/database/rows/table/$_jobsTableId/$baserowId/';
     
-    // Map job data to Baserow fields
     final baserowData = <String, dynamic>{};
-    if (data.containsKey('job_number')) baserowData['field_7237'] = data['job_number'];
-    if (data.containsKey('name')) baserowData['field_7238'] = data['name'];
+    if (data.containsKey('job_number')) baserowData['field_$_jobNumber'] = data['job_number'];
+    if (data.containsKey('name')) baserowData['field_$_jobName'] = data['name'];
+    if (data.containsKey('project_id')) baserowData['field_$_jobProjectId'] = data['project_id'];
+    if (data.containsKey('updated_at')) baserowData['field_$_jobUpdatedAt'] = data['updated_at'];
+    
+    print('🔄 Updating job in Baserow with ID: $baserowId');
     
     final response = await http.patch(
       Uri.parse(url),
@@ -211,12 +208,13 @@ class BaserowService {
       body: json.encode(baserowData),
     );
     
-    if (response.statusCode != 200) {
+    if (response.statusCode == 200) {
+      print('✅ Job updated in Baserow');
+    } else {
       print('❌ Failed to update job in Baserow: ${response.statusCode}');
+      print('❌ Response body: ${response.body}');
       throw Exception('Failed to update job: ${response.statusCode}');
     }
-    
-    print('✅ Job updated in Baserow');
   }
 
   static Future<void> deleteJob(int baserowId) async {
@@ -229,86 +227,6 @@ class BaserowService {
     } else {
       print('❌ Failed to delete job from Baserow: ${response.statusCode}');
       throw Exception('Failed to delete job: ${response.statusCode}');
-    }
-  }
-
-  static Future<Map<String, dynamic>> createPlan(Map<String, dynamic> data) async {
-    final url = '$_baseUrl/database/rows/table/$_plansTableId/';
-    
-    // Map plan data to Baserow fields
-    final baserowData = {
-      'field_7242': data['job_id'] ?? '', // Job number
-      'field_7244': data['name'] ?? '', // Plan name
-      'field_7243': data['image_path'] ?? '', // Image path
-      'field_7245': data['created_at'] ?? DateTime.now().toIso8601String(), // Created date
-    };
-    
-    final response = await http.post(
-      Uri.parse(url),
-      headers: _headers,
-      body: json.encode(baserowData),
-    );
-    
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      final responseData = json.decode(response.body);
-      print('✅ Plan created in Baserow with ID: ${responseData['id']}');
-      return responseData;
-    } else {
-      print('❌ Failed to create plan in Baserow: ${response.statusCode}');
-      print('❌ Response body: ${response.body}');
-      throw Exception('Failed to create plan: ${response.statusCode}');
-    }
-  }
-
-  static Future<void> updatePlan(int baserowId, Map<String, dynamic> data) async {
-    final url = '$_baseUrl/database/rows/table/$_plansTableId/$baserowId/';
-    
-    // Map plan data to Baserow fields
-    final baserowData = <String, dynamic>{};
-    if (data.containsKey('job_id')) baserowData['field_7242'] = data['job_id'];
-    if (data.containsKey('name')) baserowData['field_7244'] = data['name'];
-    if (data.containsKey('image_path')) baserowData['field_7243'] = data['image_path'];
-    
-    final response = await http.patch(
-      Uri.parse(url),
-      headers: _headers,
-      body: json.encode(baserowData),
-    );
-    
-    if (response.statusCode == 200) {
-      print('✅ Plan updated in Baserow');
-    } else {
-      print('❌ Failed to update plan in Baserow: ${response.statusCode}');
-      throw Exception('Failed to update plan: ${response.statusCode}');
-    }
-  }
-
-  static Future<void> deletePlan(int baserowId) async {
-    final url = '$_baseUrl/database/rows/table/$_plansTableId/$baserowId/';
-    
-    final response = await http.delete(Uri.parse(url), headers: _headers);
-    
-    if (response.statusCode == 200 || response.statusCode == 204) {
-      print('✅ Plan deleted from Baserow');
-    } else {
-      print('❌ Failed to delete plan from Baserow: ${response.statusCode}');
-      throw Exception('Failed to delete plan: ${response.statusCode}');
-    }
-  }
-
-  static Future<List<Map<String, dynamic>>> getProjects() async {
-    final url = '$_baseUrl/database/rows/table/$_projectsTableId/';
-    
-    final response = await http.get(Uri.parse(url), headers: _headers);
-    
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      final projects = List<Map<String, dynamic>>.from(data['results']);
-      print('📥 Downloaded ${projects.length} projects from Baserow');
-      return projects;
-    } else {
-      print('❌ Failed to get projects: ${response.statusCode}');
-      return [];
     }
   }
 
@@ -328,44 +246,21 @@ class BaserowService {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> getPlans() async {
-    final url = '$_baseUrl/database/rows/table/$_plansTableId/';
-    
-    final response = await http.get(Uri.parse(url), headers: _headers);
-    
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      final plans = List<Map<String, dynamic>>.from(data['results']);
-      print('📥 Downloaded ${plans.length} plans from Baserow');
-      return plans;
-    } else {
-      print('❌ Failed to get plans: ${response.statusCode}');
-      return [];
-    }
-  }
+  // ==================== PLAN IMAGES CRUD ====================
 
-  static String convertStatusFromBaserowFormat(dynamic status) {
-    if (status == null) return 'Active';
-    if (status is Map) {
-      return status['value'] ?? 'Active';
-    }
-    return status.toString();
-  }
-
-  // ==================== PHOTOS CRUD ====================
-
-  /// Create a new photo in Baserow
-  static Future<Map<String, dynamic>> createPhoto(Map<String, dynamic> data) async {
-    final url = '$_baseUrl/database/rows/table/$_photosTableId/';
+  static Future<Map<String, dynamic>> createPlanImage(Map<String, dynamic> data) async {
+    final url = '$_baseUrl/database/rows/table/$_planImagesTableId/';
     
-    // Map photo data to Baserow fields
     final baserowData = {
-      'field_7260': data['name'] ?? '', // Photo name
-      'field_7261': data['plan_id'] ?? '', // Plan ID (as string/job_number)
-      'field_7262': data['image_path'] ?? '', // Image path
+      'field_$_planJobNumber': data['job_number'] ?? '',
+      'field_$_planImagePath': data['image_path'] ?? '',
+      'field_$_planName': data['name'] ?? '',
+      'field_$_planCreatedBy': data['created_by'] ?? '',
+      'field_$_planCreatedAt': data['created_at'] ?? DateTime.now().toIso8601String(),
+      'field_$_planUpdatedAt': data['updated_at'] ?? DateTime.now().toIso8601String(),
     };
     
-    print('🔄 Creating photo in Baserow with data: $baserowData');
+    print('🔄 Creating plan image in Baserow with data: $baserowData');
     
     final response = await http.post(
       Uri.parse(url),
@@ -375,24 +270,25 @@ class BaserowService {
     
     if (response.statusCode == 200 || response.statusCode == 201) {
       final responseData = json.decode(response.body);
-      print('✅ Photo created in Baserow with ID: ${responseData['id']}');
+      print('✅ Plan image created in Baserow with ID: ${responseData['id']}');
       return responseData;
     } else {
-      print('❌ Failed to create photo in Baserow: ${response.statusCode}');
+      print('❌ Failed to create plan image in Baserow: ${response.statusCode}');
       print('❌ Response body: ${response.body}');
-      throw Exception('Failed to create photo: ${response.statusCode}');
+      throw Exception('Failed to create plan image: ${response.statusCode}');
     }
   }
 
-  /// Update an existing photo in Baserow
-  static Future<void> updatePhoto(int baserowId, Map<String, dynamic> data) async {
-    final url = '$_baseUrl/database/rows/table/$_photosTableId/$baserowId/';
+  static Future<void> updatePlanImage(int baserowId, Map<String, dynamic> data) async {
+    final url = '$_baseUrl/database/rows/table/$_planImagesTableId/$baserowId/';
     
-    // Map photo data to Baserow fields
     final baserowData = <String, dynamic>{};
-    if (data.containsKey('name')) baserowData['field_7260'] = data['name'];
-    if (data.containsKey('plan_id')) baserowData['field_7261'] = data['plan_id'];
-    if (data.containsKey('image_path')) baserowData['field_7262'] = data['image_path'];
+    if (data.containsKey('job_number')) baserowData['field_$_planJobNumber'] = data['job_number'];
+    if (data.containsKey('image_path')) baserowData['field_$_planImagePath'] = data['image_path'];
+    if (data.containsKey('name')) baserowData['field_$_planName'] = data['name'];
+    if (data.containsKey('updated_at')) baserowData['field_$_planUpdatedAt'] = data['updated_at'];
+    
+    print('🔄 Updating plan image in Baserow with ID: $baserowId');
     
     final response = await http.patch(
       Uri.parse(url),
@@ -401,60 +297,63 @@ class BaserowService {
     );
     
     if (response.statusCode == 200) {
-      print('✅ Photo updated in Baserow');
+      print('✅ Plan image updated in Baserow');
     } else {
-      print('❌ Failed to update photo in Baserow: ${response.statusCode}');
+      print('❌ Failed to update plan image in Baserow: ${response.statusCode}');
       print('❌ Response body: ${response.body}');
-      throw Exception('Failed to update photo: ${response.statusCode}');
+      throw Exception('Failed to update plan image: ${response.statusCode}');
     }
   }
 
-  /// Delete a photo from Baserow
-  static Future<void> deletePhoto(int baserowId) async {
-    final url = '$_baseUrl/database/rows/table/$_photosTableId/$baserowId/';
+  static Future<void> deletePlanImage(int baserowId) async {
+    final url = '$_baseUrl/database/rows/table/$_planImagesTableId/$baserowId/';
     
     final response = await http.delete(Uri.parse(url), headers: _headers);
     
     if (response.statusCode == 200 || response.statusCode == 204) {
-      print('✅ Photo deleted from Baserow');
+      print('✅ Plan image deleted from Baserow');
     } else {
-      print('❌ Failed to delete photo from Baserow: ${response.statusCode}');
-      throw Exception('Failed to delete photo: ${response.statusCode}');
+      print('❌ Failed to delete plan image from Baserow: ${response.statusCode}');
+      throw Exception('Failed to delete plan image: ${response.statusCode}');
     }
   }
 
-  /// Get all photos from Baserow
-  static Future<List<Map<String, dynamic>>> getPhotos() async {
-    final url = '$_baseUrl/database/rows/table/$_photosTableId/';
+  static Future<List<Map<String, dynamic>>> getPlanImages() async {
+    final url = '$_baseUrl/database/rows/table/$_planImagesTableId/';
     
     final response = await http.get(Uri.parse(url), headers: _headers);
     
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
-      final photos = List<Map<String, dynamic>>.from(data['results']);
-      print('📥 Downloaded ${photos.length} photos from Baserow');
-      return photos;
+      final planImages = List<Map<String, dynamic>>.from(data['results']);
+      print('📥 Downloaded ${planImages.length} plan images from Baserow');
+      return planImages;
     } else {
-      print('❌ Failed to get photos: ${response.statusCode}');
+      print('❌ Failed to get plan images: ${response.statusCode}');
       return [];
     }
   }
 
   // ==================== PINS CRUD ====================
 
-  /// Create a new pin in Baserow
   static Future<Map<String, dynamic>> createPin(Map<String, dynamic> data) async {
     final url = '$_baseUrl/database/rows/table/$_pinsTableId/';
     
-    // Map pin data to Baserow fields
+    print('🔍 DEBUG: createPin received data: $data');
+    print('🔍 DEBUG: data[\'plan_name\'] = ${data['plan_name']}');
+    
     final baserowData = {
-      'field_7269': data['job_number'] ?? '', // Job number (from plan_images->plans->job_number)
-      'field_7270': data['x'] ?? 0.0, // X coordinate
-      'field_7271': data['y'] ?? 0.0, // Y coordinate
-      'field_7272': data['title'] ?? '', // Title
-      'field_7441': data['before_pictures_urls'] ?? '', // Before pictures URLs
-      'field_7442': data['during_pictures_urls'] ?? '', // During pictures URLs
-      'field_7443': data['after_pictures_urls'] ?? '', // After pictures URLs
+      'field_$_pinJobNumber': data['job_number'] ?? '',
+      'field_$_pinPlanName': data['plan_name'] ?? '',
+      'field_$_pinX': data['x'] ?? 0.0,
+      'field_$_pinY': data['y'] ?? 0.0,
+      'field_$_pinTitle': data['title'] ?? '',
+      'field_$_pinBeforePictures': data['before_pictures_urls'] ?? '',
+      'field_$_pinDuringPictures': data['during_pictures_urls'] ?? '',
+      'field_$_pinAfterPictures': data['after_pictures_urls'] ?? '',
+      'field_$_pinCreatedBy': data['created_by'] ?? '',
+      'field_$_pinCreatedAt': data['created_at'] ?? DateTime.now().toIso8601String(),
+      'field_$_pinUpdatedAt': data['updated_at'] ?? DateTime.now().toIso8601String(),
     };
     
     print('🔄 Creating pin in Baserow with data: $baserowData');
@@ -476,20 +375,32 @@ class BaserowService {
     }
   }
 
-  /// Update an existing pin in Baserow
   static Future<void> updatePin(int baserowId, Map<String, dynamic> data) async {
     final url = '$_baseUrl/database/rows/table/$_pinsTableId/$baserowId/';
     
-    // Map pin data to Baserow fields
     final baserowData = <String, dynamic>{};
-    if (data.containsKey('job_number')) baserowData['field_7269'] = data['job_number'];
-    if (data.containsKey('x')) baserowData['field_7270'] = data['x'];
-    if (data.containsKey('y')) baserowData['field_7271'] = data['y'];
-    if (data.containsKey('title')) baserowData['field_7272'] = data['title'];
-    if (data.containsKey('before_pictures_urls')) baserowData['field_7441'] = data['before_pictures_urls'] ?? '';
-    if (data.containsKey('during_pictures_urls')) baserowData['field_7442'] = data['during_pictures_urls'] ?? '';
-    if (data.containsKey('after_pictures_urls')) baserowData['field_7443'] = data['after_pictures_urls'] ?? '';
+    if (data['job_number'] != null && data['job_number'].toString().isNotEmpty) {
+      baserowData['field_$_pinJobNumber'] = data['job_number'];
+    }
+    if (data['plan_name'] != null && data['plan_name'].toString().isNotEmpty) {
+      baserowData['field_$_pinPlanName'] = data['plan_name'];
+    }
+    if (data['x'] != null) baserowData['field_$_pinX'] = data['x'];
+    if (data['y'] != null) baserowData['field_$_pinY'] = data['y'];
+    if (data['title'] != null && data['title'].toString().isNotEmpty) {
+      baserowData['field_$_pinTitle'] = data['title'];
+    }
+    final bp = data['before_pictures_urls']?.toString();
+    if (bp != null && bp.isNotEmpty) baserowData['field_$_pinBeforePictures'] = bp;
+    final dp = data['during_pictures_urls']?.toString();
+    if (dp != null && dp.isNotEmpty) baserowData['field_$_pinDuringPictures'] = dp;
+    final ap = data['after_pictures_urls']?.toString();
+    if (ap != null && ap.isNotEmpty) baserowData['field_$_pinAfterPictures'] = ap;
+    if (data['updated_at'] != null) baserowData['field_$_pinUpdatedAt'] = data['updated_at'];
     
+    // Debug log to inspect outgoing payload
+    print('🔍 DEBUG: updatePin($baserowId) payload before request: $baserowData');
+
     final response = await http.patch(
       Uri.parse(url),
       headers: _headers,
@@ -501,11 +412,11 @@ class BaserowService {
     } else {
       print('❌ Failed to update pin in Baserow: ${response.statusCode}');
       print('❌ Response body: ${response.body}');
+      print('❌ Payload that caused error: $baserowData');
       throw Exception('Failed to update pin: ${response.statusCode}');
     }
   }
 
-  /// Delete a pin from Baserow
   static Future<void> deletePin(int baserowId) async {
     final url = '$_baseUrl/database/rows/table/$_pinsTableId/$baserowId/';
     
@@ -519,7 +430,6 @@ class BaserowService {
     }
   }
 
-  /// Get all pins from Baserow
   static Future<List<Map<String, dynamic>>> getPins() async {
     final url = '$_baseUrl/database/rows/table/$_pinsTableId/';
     
@@ -538,7 +448,6 @@ class BaserowService {
 
   // ==================== FILE UPLOAD ====================
 
-  /// Upload a single file to Baserow and return the URL
   static Future<String?> uploadFile(String filePath) async {
     try {
       final file = File(filePath);
@@ -550,10 +459,8 @@ class BaserowService {
       final url = '$_baseUrl/user-files/upload-file/';
       final request = http.MultipartRequest('POST', Uri.parse(url));
       
-      // Add authorization header
       request.headers['Authorization'] = 'Token $_token';
       
-      // Add file
       final fileBytes = await file.readAsBytes();
       final fileName = filePath.split(Platform.pathSeparator).last;
       request.files.add(
@@ -585,18 +492,96 @@ class BaserowService {
     }
   }
 
-  /// Upload multiple files and return comma-separated URLs
   static Future<String?> uploadMultipleFiles(List<String> filePaths) async {
-    final urls = <String>[];
+    if (filePaths.isEmpty) return null;
     
-    for (final filePath in filePaths) {
-      final url = await uploadFile(filePath);
-      if (url != null) {
-        urls.add(url);
-      }
+    print('📤 Uploading ${filePaths.length} files in PARALLEL...');
+    
+    final uploadFutures = filePaths.map((filePath) => uploadFile(filePath)).toList();
+    final results = await Future.wait(uploadFutures);
+    
+    final urls = results.where((url) => url != null).cast<String>().toList();
+    
+    if (urls.isEmpty) {
+      print('❌ All uploads failed');
+      return null;
     }
     
-    if (urls.isEmpty) return null;
+    print('✅ Successfully uploaded ${urls.length}/${filePaths.length} files');
     return urls.join(',');
+  }
+
+  // ==================== USERS ====================
+
+  static Future<Map<String, dynamic>?> getUser(String username) async {
+    final url = '$_baseUrl/database/rows/table/$_usersTableId/?user_data=true&filters=%7B%22filter_type%22%3A%22AND%22%2C%22filters%22%3A%5B%7B%22field%22%3A$_userUsername%2C%22type%22%3A%22equal%22%2C%22value%22%3A%22$username%22%7D%5D%7D';
+    
+    print('🔍 Getting user from URL: $url');
+    
+    final response = await http.get(
+      Uri.parse(url),
+      headers: _headers,
+    );
+    
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final results = List<Map<String, dynamic>>.from(data['results']);
+      if (results.isNotEmpty) {
+        print('✅ User found: ${results.first['field_$_userUsername']}');
+        return results.first;
+      }
+    } else {
+      print('❌ Failed to get user: ${response.statusCode}');
+    }
+    return null;
+  }
+
+  static Future<void> updateUserSession(String username, Map<String, dynamic> sessionData) async {
+    final user = await getUser(username);
+    if (user == null) {
+      throw Exception('User not found: $username');
+    }
+
+    final rowId = user['id'];
+    final url = '$_baseUrl/database/rows/table/$_usersTableId/$rowId/';
+
+    final updateData = <String, dynamic>{};
+    if (sessionData.containsKey('is_active')) {
+      updateData['field_7497'] = sessionData['is_active'] ? 'true' : 'false';
+    }
+    // Note: last_activity field not yet added to Users table
+
+    final response = await http.patch(
+      Uri.parse(url),
+      headers: _headers,
+      body: json.encode(updateData),
+    );
+
+    if (response.statusCode == 200) {
+      print('✅ User session updated successfully');
+    } else {
+      print('❌ Failed to update user session: ${response.statusCode}');
+      throw Exception('Failed to update user session: ${response.statusCode}');
+    }
+  }
+
+  static String convertStatusFromBaserowFormat(dynamic status) {
+    if (status == null) return 'Active';
+    if (status is Map) {
+      return status['value'] ?? 'Active';
+    }
+    return status.toString();
+  }
+
+  static Future<Map<String, dynamic>> createPhoto(Map<String, dynamic> data) async {
+    throw UnimplementedError('Photos table not in new schema');
+  }
+
+  static Future<void> updatePhoto(int baserowId, Map<String, dynamic> data) async {
+    throw UnimplementedError('Photos table not in new schema');
+  }
+
+  static Future<void> deletePhoto(int baserowId) async {
+    throw UnimplementedError('Photos table not in new schema');
   }
 }

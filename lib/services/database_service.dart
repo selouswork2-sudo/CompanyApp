@@ -19,7 +19,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 21, // Added local photo paths for pins and plans
+      version: 23, // Added updated_at to pins table
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -286,6 +286,22 @@ CREATE TABLE IF NOT EXISTS timesheets (
       // Add local image path to plan_images table
       await db.execute('ALTER TABLE plan_images ADD COLUMN local_image_path TEXT');
     }
+    
+    if (oldVersion < 22) {
+      // Add sync_settings table for tracking sync timestamps
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS sync_settings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          key TEXT UNIQUE NOT NULL,
+          value TEXT NOT NULL
+        )
+      ''');
+    }
+    
+    if (oldVersion < 23) {
+      // Add updated_at column to pins table
+      await db.execute('ALTER TABLE pins ADD COLUMN updated_at TEXT');
+    }
   }
 
   Future _createDB(Database db, int version) async {
@@ -473,6 +489,7 @@ CREATE TABLE pins (
   assigned_to TEXT,
   status TEXT DEFAULT 'Open',
   created_at TEXT NOT NULL,
+  updated_at TEXT,
   before_pictures_urls TEXT,
   during_pictures_urls TEXT,
   after_pictures_urls TEXT,

@@ -71,8 +71,18 @@ class SyncService {
         uploaded++;
         print('✅ Successfully uploaded change: ${change['action']}');
       } catch (e) {
-        print('❌ Failed to upload change: $e');
-        print('❌ Change that failed: ${change['action']} - ${change['data']}');
+        // Check if it's a 404 (item not found in Baserow - probably already deleted)
+        final errorMessage = e.toString();
+        if (errorMessage.contains('404') || errorMessage.contains('not found')) {
+          print('⚠️ Item not found in Baserow (404) - removing from pending changes');
+          await _removePendingChange(change['id']);
+        } else if (errorMessage.contains('500')) {
+          print('❌ Server error (500) - keeping in pending changes for retry');
+          print('❌ Change that failed: ${change['action']} - ${change['data']}');
+        } else {
+          print('❌ Failed to upload change: $e');
+          print('❌ Change that failed: ${change['action']} - ${change['data']}');
+        }
       }
     }
     
@@ -112,7 +122,14 @@ class SyncService {
     
     switch (action) {
       case 'create':
-          final response = await BaserowService.createProject(data);
+          // Filter out fields that don't exist in Baserow
+          final cleanData = <String, dynamic>{};
+          if (data.containsKey('name')) cleanData['name'] = data['name'];
+          if (data.containsKey('address')) cleanData['address'] = data['address'];
+          if (data.containsKey('status')) cleanData['status'] = data['status'];
+          // Don't send: start_date, end_date, description, id, baserow_id, sync_status, last_sync, needs_sync, created_at, updated_at
+          
+          final response = await BaserowService.createProject(cleanData);
           // Update local project with Baserow ID
           final baserowId = response['id'];
           if (baserowId != null && data['id'] != null) {
@@ -131,7 +148,14 @@ class SyncService {
       case 'update':
         final baserowId = data['baserow_id'];
         if (baserowId != null) {
-          await BaserowService.updateProject(baserowId, data);
+          // Filter out fields that don't exist in Baserow
+          final cleanData = <String, dynamic>{};
+          if (data.containsKey('name')) cleanData['name'] = data['name'];
+          if (data.containsKey('address')) cleanData['address'] = data['address'];
+          if (data.containsKey('status')) cleanData['status'] = data['status'];
+          // Don't send: start_date, end_date, description, id, baserow_id, sync_status, last_sync, needs_sync, created_at, updated_at
+          
+          await BaserowService.updateProject(baserowId, cleanData);
             // Mark as synced
             if (data['id'] != null) {
               await DatabaseService.instance.update('projects', {
@@ -198,25 +222,47 @@ class SyncService {
           break;
           
         case 'create_plan':
-          final response = await BaserowService.createPlan(data);
-          // Update local plan with Baserow ID and uploaded file URL
+          // Get the latest plan data from database (includes uploaded URL)
+          final localPlan = await DatabaseService.instance.query(
+            'plan_images',
+            where: 'id = ?',
+            whereArgs: [data['id']],
+          );
+          
+          if (localPlan.isEmpty) {
+            print('⚠️ Plan not found locally, skipping sync');
+            break;
+          }
+          
+          // Use the latest image_path from database (which should be URL after background upload)
+          data['image_path'] = localPlan.first['image_path'];
+          print('🔄 Using latest image_path from database: ${data['image_path']}');
+          
+          // Get job_number from job_id
+          final jobId = localPlan.first['job_id'];
+          if (jobId != null) {
+            final jobs = await DatabaseService.instance.query(
+              'plans',
+              where: 'id = ?',
+              whereArgs: [jobId],
+            );
+            
+            if (jobs.isNotEmpty) {
+              data['job_number'] = jobs.first['job_number'];
+              print('🔄 Found job_number for plan image: ${data['job_number']}');
+            }
+          }
+          
+          final response = await BaserowService.createPlanImage(data);
           final baserowId = response['id'];
-          final uploadedFileUrl = response['uploaded_file_url'];
+          
           if (baserowId != null && data['id'] != null) {
-            final updateData = {
+            await DatabaseService.instance.update('plan_images', {
               'baserow_id': baserowId,
               'sync_status': 'synced',
               'needs_sync': 0,
               'last_sync': DateTime.now().toIso8601String(),
-            };
-            
-            // Update image_path with the uploaded URL if available
-            if (uploadedFileUrl != null) {
-              updateData['image_path'] = uploadedFileUrl;
-              print('🔄 Updated image_path with uploaded URL: $uploadedFileUrl');
-            }
-            
-            await DatabaseService.instance.update('plan_images', updateData, data['id']);
+            }, data['id']);
             print('✅ Updated local plan with Baserow ID: $baserowId');
           } else {
             print('⚠️ Cannot update local plan: baserowId=$baserowId, localId=${data['id']}');
@@ -226,7 +272,7 @@ class SyncService {
         case 'update_plan':
           final baserowId = data['baserow_id'];
           if (baserowId != null) {
-            await BaserowService.updatePlan(baserowId, data);
+            await BaserowService.updatePlanImage(baserowId, data);
             // Mark as synced
             if (data['id'] != null) {
               await DatabaseService.instance.update('plan_images', {
@@ -243,7 +289,7 @@ class SyncService {
         case 'delete_plan':
           final baserowId = data['baserow_id'];
           if (baserowId != null) {
-            await BaserowService.deletePlan(baserowId);
+            await BaserowService.deletePlanImage(baserowId);
           } else {
             print('⚠️ Cannot delete plan: no Baserow ID found');
           }
@@ -289,9 +335,18 @@ class SyncService {
           }
           break;
 
+        case 'delete_plan':
+          final baserowId = data['baserow_id'];
+          if (baserowId != null) {
+            await BaserowService.deletePlanImage(baserowId);
+          } else {
+            print('⚠️ Cannot delete plan: no Baserow ID found');
+          }
+          break;
+
         // Pins actions
         case 'create_pin':
-          // Get job_number from plan_image_id
+          // Get job_number AND plan_image_name from plan_image_id
           final planImageId = data['plan_image_id'];
           if (planImageId != null) {
             final planImages = await DatabaseService.instance.query(
@@ -301,7 +356,9 @@ class SyncService {
             );
             
             if (planImages.isNotEmpty) {
+              final planImageName = planImages.first['name'] as String?;
               final jobId = planImages.first['job_id'];
+              
               if (jobId != null) {
                 final jobs = await DatabaseService.instance.query(
                   'plans',
@@ -312,12 +369,36 @@ class SyncService {
                 if (jobs.isNotEmpty) {
                   data['job_number'] = jobs.first['job_number'];
                   print('🔄 Found job_number for pin: ${data['job_number']}');
+                  
+                  // Add plan_name to the data for Baserow
+                  if (planImageName != null) {
+                    data['plan_name'] = planImageName;
+                    print('🔄 Found plan_name for pin: $planImageName');
+                  }
                 }
               }
             }
           }
           
-          final response = await BaserowService.createPin(data);
+          // Filter out local-only fields before sending to Baserow
+          print('🔍 DEBUG: data before filtering: $data');
+          print('🔍 DEBUG: data[\'plan_name\'] before filtering: ${data['plan_name']}');
+          final baserowData = Map<String, dynamic>.from(data);
+          baserowData.remove('before_pictures_local');
+          baserowData.remove('during_pictures_local');
+          baserowData.remove('after_pictures_local');
+          baserowData.remove('id');
+          baserowData.remove('plan_image_id');
+          baserowData.remove('baserow_id');
+          baserowData.remove('sync_status');
+          baserowData.remove('last_sync');
+          baserowData.remove('needs_sync');
+          baserowData.remove('description');
+          baserowData.remove('assigned_to');
+          baserowData.remove('status');
+          baserowData.remove('created_at');
+          
+          final response = await BaserowService.createPin(baserowData);
           final baserowId = response['id'];
           if (baserowId != null && data['id'] != null) {
             await DatabaseService.instance.update('pins', {
@@ -333,7 +414,58 @@ class SyncService {
         case 'update_pin':
           final baserowId = data['baserow_id'];
           if (baserowId != null) {
-            await BaserowService.updatePin(baserowId, data);
+            // Get job_number AND plan_image_name from plan_image_id (if not already in data)
+            if (!data.containsKey('job_number') || !data.containsKey('plan_name')) {
+              final planImageId = data['plan_image_id'];
+              if (planImageId != null) {
+                final planImages = await DatabaseService.instance.query(
+                  'plan_images',
+                  where: 'id = ?',
+                  whereArgs: [planImageId],
+                );
+                
+                if (planImages.isNotEmpty) {
+                  final planImageName = planImages.first['name'] as String?;
+                  final jobId = planImages.first['job_id'];
+                  
+                  if (jobId != null && !data.containsKey('job_number')) {
+                    final jobs = await DatabaseService.instance.query(
+                      'plans',
+                      where: 'id = ?',
+                      whereArgs: [jobId],
+                    );
+                    
+                    if (jobs.isNotEmpty) {
+                      data['job_number'] = jobs.first['job_number'];
+                      print('🔄 Found job_number for pin update: ${data['job_number']}');
+                    }
+                  }
+                  
+                  if (planImageName != null && !data.containsKey('plan_name')) {
+                    data['plan_name'] = planImageName;
+                    print('🔄 Found plan_image_name for pin update: $planImageName');
+                  }
+                }
+              }
+            }
+            
+            // Filter out local-only fields before sending to Baserow
+            final baserowData = Map<String, dynamic>.from(data);
+            baserowData.remove('before_pictures_local');
+            baserowData.remove('during_pictures_local');
+            baserowData.remove('after_pictures_local');
+            baserowData.remove('id');
+            baserowData.remove('plan_image_id');
+            baserowData.remove('baserow_id');
+            baserowData.remove('sync_status');
+            baserowData.remove('last_sync');
+            baserowData.remove('needs_sync');
+            baserowData.remove('description');
+            baserowData.remove('assigned_to');
+            baserowData.remove('status');
+            baserowData.remove('created_at');
+            
+            await BaserowService.updatePin(baserowId, baserowData);
             if (data['id'] != null) {
               await DatabaseService.instance.update('pins', {
                 'sync_status': 'synced',
@@ -381,7 +513,8 @@ class SyncService {
       
       for (final baserowProject in baserowProjects) {
         final baserowId = baserowProject['id'] as int;
-        final projectName = baserowProject['field_7227'] ?? '';
+        // Updated field IDs per new schema: name=7454, address=7455, status=7456, created_at=7458
+        final projectName = baserowProject['field_7454'] ?? '';
         
         if (projectName.isEmpty) continue; // Skip projects without names
         
@@ -395,10 +528,8 @@ class SyncService {
           
           final projectMap = {
             'name': projectName,
-            'address': baserowProject['field_7228'] ?? '',
-            'status': BaserowService.convertStatusFromBaserowFormat(baserowProject['field_7229']),
-            'start_date': baserowProject['field_7231'] ?? '',
-            'end_date': baserowProject['field_7232'] ?? '',
+            'address': baserowProject['field_7455'] ?? '',
+            'status': BaserowService.convertStatusFromBaserowFormat(baserowProject['field_7456']),
             'updated_at': DateTime.now().toIso8601String(),
             'sync_status': 'synced',
             'last_sync': DateTime.now().toIso8601String(),
@@ -423,11 +554,9 @@ class SyncService {
           // Add new project (only if name doesn't exist)
           final projectMap = {
             'name': projectName,
-            'address': baserowProject['field_7228'] ?? '',
-            'status': BaserowService.convertStatusFromBaserowFormat(baserowProject['field_7229']),
-            'start_date': baserowProject['field_7231'] ?? '',
-            'end_date': baserowProject['field_7232'] ?? '',
-            'created_at': baserowProject['field_7294'] ?? DateTime.now().toIso8601String(),
+            'address': baserowProject['field_7455'] ?? '',
+            'status': BaserowService.convertStatusFromBaserowFormat(baserowProject['field_7456']),
+            'created_at': baserowProject['field_7458'] ?? DateTime.now().toIso8601String(),
             'updated_at': DateTime.now().toIso8601String(),
             'baserow_id': baserowId,
             'sync_status': 'synced',
@@ -448,6 +577,9 @@ class SyncService {
       
       // Also sync plans
       await _downloadPlansFromBaserow();
+      
+      // Also sync pins
+      await _downloadPinsFromBaserow();
       
     } catch (e) {
       print('❌ Failed to download from Baserow: $e');
@@ -471,8 +603,9 @@ class SyncService {
 
       for (final baserowJob in baserowJobs) {
         final baserowId = baserowJob['id'] as int;
-        final jobNumber = baserowJob['field_7237'] ?? '';
-        final jobName = baserowJob['field_7238'] ?? '';
+        // Updated field IDs per new schema: job_number=7463, name=7464
+        final jobNumber = baserowJob['field_7463'] ?? '';
+        final jobName = baserowJob['field_7464'] ?? '';
 
         if (jobNumber.isEmpty) continue; // Skip jobs without job numbers
 
@@ -515,7 +648,29 @@ class SyncService {
           added++;
           print('🔄 Added new job from Baserow: $jobNumber');
         } else {
-          print('⚠️ Skipping job "$jobNumber" - job number already exists locally');
+          // Job number exists locally but no baserow_id yet - update with baserow_id
+          final localJobWithoutBaserowId = localJobs.firstWhere(
+            (j) => (j['job_number'] as String) == jobNumber && j['baserow_id'] == null,
+            orElse: () => {},
+          );
+          
+          if (localJobWithoutBaserowId.isNotEmpty) {
+            // Update local job with Baserow ID
+            final jobMap = {
+              'baserow_id': baserowId,
+              'name': jobName,
+              'updated_at': DateTime.now().toIso8601String(),
+              'sync_status': 'synced',
+              'last_sync': DateTime.now().toIso8601String(),
+              'needs_sync': 0,
+            };
+            
+            await DatabaseService.instance.update('plans', jobMap, localJobWithoutBaserowId['id']);
+            updated++;
+            print('🔄 Linked local job to Baserow: $jobNumber (baserow_id: $baserowId)');
+          } else {
+            print('⚠️ Skipping job "$jobNumber" - job number already exists locally');
+          }
         }
       }
 
@@ -529,7 +684,7 @@ class SyncService {
   /// Download plans from Baserow and sync with local database
   static Future<void> _downloadPlansFromBaserow() async {
     try {
-      final baserowPlans = await BaserowService.getPlans();
+      final baserowPlans = await BaserowService.getPlanImages();
       print('📥 Downloaded ${baserowPlans.length} plans from Baserow');
 
       // Get existing local plans
@@ -543,10 +698,11 @@ class SyncService {
 
       for (final baserowPlan in baserowPlans) {
         final baserowId = baserowPlan['id'] as int;
-        final planName = baserowPlan['field_7244'] ?? '';
-        final jobNumber = baserowPlan['field_7242'] ?? '';
-        final imagePath = baserowPlan['field_7243'] ?? '';
-        final createdAt = baserowPlan['field_7245'] ?? DateTime.now().toIso8601String();
+        // Updated field IDs per new schema: job_number=7470, image_path=7471, name=7472, created_at=7474
+        final planName = baserowPlan['field_7472'] ?? '';
+        final jobNumber = baserowPlan['field_7470'] ?? '';
+        final imagePath = baserowPlan['field_7471'] ?? '';
+        final createdAt = baserowPlan['field_7474'] ?? DateTime.now().toIso8601String();
 
         if (planName.isEmpty) continue; // Skip plans without names
 
@@ -616,6 +772,112 @@ class SyncService {
     }
   }
 
+  /// Download pins from Baserow and sync with local database
+  static Future<void> _downloadPinsFromBaserow() async {
+    try {
+      final baserowPins = await BaserowService.getPins();
+      print('📥 Downloaded ${baserowPins.length} pins from Baserow');
+
+      // Get existing local pins
+      final localPins = await DatabaseService.instance.query('pins');
+      final existingBaserowIds = localPins.map((p) => p['baserow_id']).where((id) => id != null).cast<int>().toSet();
+
+      // Process Baserow pins
+      int added = 0;
+      int updated = 0;
+
+      for (final baserowPin in baserowPins) {
+        final baserowId = baserowPin['id'] as int;
+        // Field IDs per new schema
+        final jobNumber = baserowPin['field_7476'] ?? '';
+        final planName = baserowPin['field_7477'] ?? '';
+        final x = baserowPin['field_7478'] ?? '';
+        final y = baserowPin['field_7479'] ?? '';
+        final title = baserowPin['field_7480'] ?? '';
+        final beforeUrls = baserowPin['field_7481'] ?? '';
+        final duringUrls = baserowPin['field_7482'] ?? '';
+        final afterUrls = baserowPin['field_7483'] ?? '';
+
+        // Find local plan_image_id by job_number AND plan_name
+        int? localPlanImageId;
+        if (jobNumber.isNotEmpty && planName.isNotEmpty) {
+          final localJobs = await DatabaseService.instance.query('plans', where: 'job_number = ?', whereArgs: [jobNumber]);
+          print('🔍 Looking for job "$jobNumber" and plan "$planName" - found ${localJobs.length} jobs');
+          
+          if (localJobs.isNotEmpty) {
+            final localJobId = localJobs.first['id'] as int;
+            // Find the SPECIFIC plan_image by name
+            final localPlans = await DatabaseService.instance.query('plan_images', where: 'job_id = ? AND name = ?', whereArgs: [localJobId, planName]);
+            print('🔍 Found ${localPlans.length} plan images for job "$jobNumber" and plan "$planName"');
+            
+            if (localPlans.isNotEmpty) {
+              localPlanImageId = localPlans.first['id'] as int;
+              print('✅ Using plan_image_id: $localPlanImageId for job "$jobNumber" and plan "$planName"');
+            }
+          }
+        }
+
+        if (localPlanImageId == null) {
+          print('⚠️ Skipping pin "$title" - job number "$jobNumber" not found locally');
+          continue;
+        }
+
+        // Check if we already have this pin by Baserow ID
+        if (existingBaserowIds.contains(baserowId)) {
+          // Update existing pin
+          final localPin = localPins.firstWhere(
+            (p) => p['baserow_id'] == baserowId,
+            orElse: () => throw Exception('Pin with Baserow ID $baserowId not found'),
+          );
+
+          final pinMap = {
+            'plan_image_id': localPlanImageId,
+            'x': double.tryParse(x.toString()) ?? 0.0,
+            'y': double.tryParse(y.toString()) ?? 0.0,
+            'title': title,
+            'before_pictures_urls': beforeUrls.isEmpty ? null : beforeUrls,
+            'during_pictures_urls': duringUrls.isEmpty ? null : duringUrls,
+            'after_pictures_urls': afterUrls.isEmpty ? null : afterUrls,
+            'updated_at': DateTime.now().toIso8601String(),
+            'sync_status': 'synced',
+            'last_sync': DateTime.now().toIso8601String(),
+            'needs_sync': 0,
+          };
+
+          await DatabaseService.instance.update('pins', pinMap, localPin['id']);
+          updated++;
+          print('🔄 Updated existing pin from Baserow: $title');
+
+        } else {
+          // Add new pin
+          final pinMap = {
+            'plan_image_id': localPlanImageId,
+            'x': double.tryParse(x.toString()) ?? 0.0,
+            'y': double.tryParse(y.toString()) ?? 0.0,
+            'title': title,
+            'created_at': DateTime.now().toIso8601String(),
+            'before_pictures_urls': beforeUrls.isEmpty ? null : beforeUrls,
+            'during_pictures_urls': duringUrls.isEmpty ? null : duringUrls,
+            'after_pictures_urls': afterUrls.isEmpty ? null : afterUrls,
+            'baserow_id': baserowId,
+            'sync_status': 'synced',
+            'last_sync': DateTime.now().toIso8601String(),
+            'needs_sync': 0,
+          };
+
+          await DatabaseService.instance.insert('pins', pinMap);
+          added++;
+          print('🔄 Added new pin from Baserow: $title');
+        }
+      }
+
+      print('✅ Pins sync completed: $added new pins added, $updated pins updated');
+
+    } catch (e) {
+      print('❌ Failed to download pins from Baserow: $e');
+    }
+  }
+
   /// Create job locally and queue for sync
   static Future<void> createJobLocally(Plan job) async {
     final jobMap = job.toMap();
@@ -660,10 +922,15 @@ class SyncService {
       return;
     }
     
-    // Save pending change before deleting locally
+    // Queue delete for Baserow before deleting locally
     final jobMap = job.toMap();
-    await _savePendingChange('delete_job', jobMap);
+    if (job.baserowId != null) {
+      await _savePendingChange('delete_job', {'id': job.id, 'baserow_id': job.baserowId, 'job_number': job.jobNumber, 'name': job.name ?? ''});
+    } else {
+      print('⚠️ Job has no Baserow ID, deleted locally only');
+    }
     
+    // Delete locally
     await DatabaseService.instance.delete('plans', job.id!);
     print('✅ Job deleted locally and queued for sync');
   }
@@ -720,14 +987,17 @@ class SyncService {
       final baserowId = project['baserow_id'];
       
       if (baserowId != null) {
-        // First, find all related data to delete from Baserow
+        // First, queue cascade delete from Baserow
         await _deleteProjectCascadeFromBaserow(projectId, baserowId);
         
-        // Then delete locally (cascade delete will handle local cleanup)
-        await DatabaseService.instance.delete('projects', projectId);
+        // Queue project delete for Baserow
         await _savePendingChange('delete', {'id': projectId, 'baserow_id': baserowId});
-        print('✅ Project deleted locally and queued for sync');
+        
+        // Then delete locally
+        await DatabaseService.instance.delete('projects', projectId);
+        print('✅ Project deleted locally and queued for sync to Baserow');
       } else {
+        // No Baserow ID, delete locally only
         await DatabaseService.instance.delete('projects', projectId);
         print('⚠️ Project has no Baserow ID, deleted locally only');
       }
@@ -1011,8 +1281,13 @@ class SyncService {
 
   /// Delete plan locally and queue for sync
   static Future<void> deletePlanLocally(Map<String, dynamic> planData) async {
-    // Queue deletion for sync before deleting locally
-    await _savePendingChange('delete_plan', planData);
+    // Queue deletion for Baserow before deleting locally
+    final baserowId = planData['baserow_id'];
+    if (baserowId != null) {
+      await _savePendingChange('delete_plan', {'id': planData['id'], 'baserow_id': baserowId});
+    } else {
+      print('⚠️ Plan has no Baserow ID, deleted locally only');
+    }
     
     // Delete locally
     await DatabaseService.instance.delete('plan_images', planData['id']);

@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../services/database_service.dart';
 import '../services/sync_service.dart';
+import '../services/baserow_service.dart';
 import '../models/plan_image.dart';
 import 'plan_viewer_screen.dart';
 
@@ -39,72 +40,64 @@ class _JobPlansScreenState extends State<JobPlansScreen> {
     setState(() {
       _isLoading = true;
     });
+    
+    // First, find local job_id from job_number
+    final jobs = await DatabaseService.instance.query(
+      'plans',
+      where: 'job_number = ?',
+      whereArgs: [widget.jobNumber],
+    );
+    
+    if (jobs.isEmpty) {
+      print('⚠️ No job found with job_number: ${widget.jobNumber}');
+      setState(() {
+        _planImages = [];
+        _isLoading = false;
+      });
+      return;
+    }
+    
+    final localJobId = jobs.first['id'] as int;
+    
+    // Then query plan_images by job_id
     final maps = await DatabaseService.instance.query(
       'plan_images',
       where: 'job_id = ?',
-      whereArgs: [widget.planId],
+      whereArgs: [localJobId],
     );
+    
     setState(() {
       _planImages = maps.map((e) => PlanImage.fromMap(e)).toList();
       _isLoading = false;
     });
+    
+    print('📋 Loaded ${_planImages.length} plan images for job_number: ${widget.jobNumber}');
   }
 
   Widget _buildImageWidget(String imagePath) {
-    // Check if it's a URL or local file path
-    if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
-      // Network image (from Baserow) - download and cache
-      return FutureBuilder<String?>(
-        future: _downloadAndCacheImage(imagePath),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Container(
-              color: Colors.grey[300],
-              child: const Center(
-                child: CircularProgressIndicator(),
-              ),
-            );
-          }
-          
-          if (snapshot.hasData && snapshot.data != null) {
-            // Show cached local image
-            return Image.file(
-              File(snapshot.data!),
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  color: Colors.grey[300],
-                  child: const Icon(
-                    Icons.broken_image,
-                    size: 50,
-                    color: Colors.grey,
-                  ),
-                );
-              },
-            );
-          } else {
-            // Show network image as fallback
-            return Image.network(
-              imagePath,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  color: Colors.grey[300],
-                  child: const Icon(
-                    Icons.broken_image,
-                    size: 50,
-                    color: Colors.grey,
-                  ),
-                );
-              },
-            );
-          }
+    // Try to display from local path first, then fallback to network
+    if (imagePath.startsWith('/') || !imagePath.startsWith('http')) {
+      // Local file path - try to display it
+      return Image.file(
+        File(imagePath),
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          // If local file doesn't exist, it's probably a network URL that needs to be loaded
+          // Since we don't have a network URL here, show placeholder
+          return Container(
+            color: Colors.grey[300],
+            child: const Icon(
+              Icons.broken_image,
+              size: 50,
+              color: Colors.grey,
+            ),
+          );
         },
       );
     } else {
-      // Local file
-      return Image.file(
-        File(imagePath),
+      // Network URL (from Baserow)
+      return Image.network(
+        imagePath,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
           return Container(
@@ -113,6 +106,19 @@ class _JobPlansScreenState extends State<JobPlansScreen> {
               Icons.broken_image,
               size: 50,
               color: Colors.grey,
+            ),
+          );
+        },
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Container(
+            color: Colors.grey[300],
+            child: Center(
+              child: CircularProgressIndicator(
+                value: loadingProgress.expectedTotalBytes != null
+                    ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                    : null,
+              ),
             ),
           );
         },
@@ -184,7 +190,10 @@ class _JobPlansScreenState extends State<JobPlansScreen> {
     if (source == null) return;
 
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: source);
+    final XFile? image = await picker.pickImage(
+      source: source,
+      imageQuality: 70, // Compress images to 70% quality for faster upload
+    );
 
     if (image == null) return;
 
@@ -220,13 +229,6 @@ class _JobPlansScreenState extends State<JobPlansScreen> {
                 return;
               }
 
-              final planImage = PlanImage(
-                jobId: widget.planId,
-                imagePath: imagePath,
-                name: nameController.text,
-                createdAt: DateTime.now(),
-              );
-
               // Get the job's Baserow ID and job number from the plans table
               final jobMaps = await DatabaseService.instance.query(
                 'plans',
@@ -247,27 +249,66 @@ class _JobPlansScreenState extends State<JobPlansScreen> {
                 return;
               }
 
-              // Simple plan data for Baserow
+              // STEP 1: Save immediately with local path (OPTIMISTIC UI)
+              // Get local job_id (integer) from plans table
+              final localJobId = jobMaps.first['id'] as int;
+              
               final planData = {
-                'job_id': jobNumber,  // J1441.1.1
-                'image_path': imagePath,
+                'job_id': localJobId,  // INTEGER - foreign key to plans table
+                'image_path': imagePath,  // LOCAL PATH - shows thumbnail immediately!
                 'name': nameController.text,
                 'created_at': DateTime.now().toIso8601String(),
               };
               
               await SyncService.createPlanLocally(planData);
               
-              // Trigger background sync
-              SyncService.performFullSync().then((_) {
-                print('✅ Background sync completed after plan creation');
-              }).catchError((error) {
-                print('⚠️ Background sync failed: $error');
-              });
-              
               if (context.mounted) {
                 Navigator.pop(context);
                 _loadPlanImages();
+                
+                // Show success message
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Plan added (uploading in background...)')),
+                );
               }
+              
+              // STEP 2: Upload to Baserow in background and update URL
+              print('📤 Uploading plan image to Baserow in background...');
+              final uploadedUrl = await BaserowService.uploadFile(imagePath);
+              
+              if (uploadedUrl == null) {
+                print('❌ Failed to upload plan image to Baserow');
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Upload failed, will retry later')),
+                  );
+                }
+                return;
+              }
+              
+              print('✅ Plan image uploaded to Baserow: $uploadedUrl');
+              
+              // Update local database with uploaded URL
+              final planImages = await DatabaseService.instance.query(
+                'plan_images',
+                where: 'job_id = ? AND name = ?',
+                whereArgs: [localJobId, nameController.text],  // Use localJobId (integer), not jobNumber (string)
+              );
+              
+              if (planImages.isNotEmpty) {
+                await DatabaseService.instance.update(
+                  'plan_images',
+                  {'image_path': uploadedUrl},
+                  planImages.first['id'],
+                );
+                print('✅ Updated plan image path with Baserow URL');
+              } else {
+                print('⚠️ No plan image found to update with URL');
+              }
+              
+              // Sync to Baserow
+              await SyncService.performFullSync();
+              print('✅ Background sync completed after plan upload');
             },
             child: const Text('Save'),
           ),

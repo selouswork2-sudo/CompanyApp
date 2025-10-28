@@ -371,16 +371,83 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
   }
 
   Future<void> _deletePin(Pin pin) async {
-    await DatabaseService.instance.delete('pins', pin.id!);
-    setState(() {
-      _pins.removeWhere((p) => p.id == pin.id);
-    });
+    // Use SyncService to delete and sync to Baserow
+    await SyncService.deletePinLocally(pin.id!);
+    await SyncService.performFullSync();
+    print('✅ Sync completed after pin deletion');
+    
+    // Reload all pins (including renumbering)
+    await _loadPins();
+    print('✅ Pins reloaded from database');
+    
+    // Renumber remaining pins
+    await _renumberPins();
+  }
+
+  Future<void> _renumberPins() async {
+    if (_pins.isEmpty) return;
+
+    // Sort pins by created_at to maintain consistent ordering
+    final sortedPins = List<Pin>.from(_pins)
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    // Renumber pins starting from 1
+    for (int i = 0; i < sortedPins.length; i++) {
+      final currentPin = sortedPins[i];
+      final newTitle = 'Pin ${i + 1}';
+
+      // Only update if the title has changed
+      if (currentPin.title != newTitle) {
+        // Get latest pin data from database to ensure we have all fields
+        final currentPinData = await DatabaseService.instance.query(
+          'pins',
+          where: 'id = ?',
+          whereArgs: [currentPin.id],
+        );
+
+        if (currentPinData.isEmpty) continue;
+
+        final dbPin = Pin.fromMap(currentPinData.first);
+
+    final updatedPin = Pin(
+          id: dbPin.id,
+          planImageId: dbPin.planImageId,
+          x: dbPin.x,
+          y: dbPin.y,
+          title: newTitle, // ← NEW TITLE
+          description: dbPin.description,
+          assignedTo: dbPin.assignedTo,
+          status: dbPin.status,
+          createdAt: dbPin.createdAt,
+          beforePicturesUrls: dbPin.beforePicturesUrls,
+          duringPicturesUrls: dbPin.duringPicturesUrls,
+          afterPicturesUrls: dbPin.afterPicturesUrls,
+          beforePicturesLocal: dbPin.beforePicturesLocal,
+          duringPicturesLocal: dbPin.duringPicturesLocal,
+          afterPicturesLocal: dbPin.afterPicturesLocal,
+          baserowId: dbPin.baserowId,
+          syncStatus: dbPin.syncStatus,
+          lastSync: dbPin.lastSync,
+          needsSync: dbPin.needsSync,
+        );
+
+        // Update locally and sync to Baserow
+        await SyncService.updatePinLocally(updatedPin.toMap());
+      }
+    }
+
+    // Sync all renumbered pins to Baserow
+    await SyncService.performFullSync();
+    print('✅ Pins renumbered and synced to Baserow');
+
+    // Reload pins to reflect changes
+    await _loadPins();
   }
 
   Future<void> _updatePinPosition(Pin pin, double newX, double newY) async {
     // Get latest pin data from database to ensure we have baserow_id and photo URLs
     final currentPinData = await DatabaseService.instance.query(
-      'pins',
+          'pins',
       where: 'id = ?',
       whereArgs: [pin.id],
     );
@@ -431,59 +498,69 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
     if (isWindows) {
       // For Windows, use file picker to select images
       final picker = ImagePicker();
-      pickedFiles = await picker.pickMultiImage();
+      pickedFiles = await picker.pickMultiImage(
+        imageQuality: 70, // Compress images to 70% quality for faster upload
+      );
     } else {
       // For mobile platforms, show source selection
-      final String? source = await showModalBottomSheet<String>(
-        context: context,
-        builder: (context) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt),
-                title: const Text('Camera'),
-                onTap: () => Navigator.pop(context, 'camera'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library),
-                title: const Text('Gallery (Single)'),
-                onTap: () => Navigator.pop(context, 'gallery_single'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Gallery (Multiple)'),
-                onTap: () => Navigator.pop(context, 'gallery_multiple'),
-              ),
-            ],
-          ),
+    final String? source = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(context, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Gallery (Single)'),
+              onTap: () => Navigator.pop(context, 'gallery_single'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Gallery (Multiple)'),
+              onTap: () => Navigator.pop(context, 'gallery_multiple'),
+            ),
+          ],
         ),
-      );
+      ),
+    );
 
-      if (source != null) {
-        final picker = ImagePicker();
+    if (source != null) {
+      final picker = ImagePicker();
 
-        if (source == 'gallery_multiple') {
-          pickedFiles = await picker.pickMultiImage();
-        } else if (source == 'gallery_single') {
-          final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-          if (pickedFile != null) {
-            pickedFiles = [pickedFile];
-          }
-        } else if (source == 'camera') {
-          final pickedFile = await picker.pickImage(source: ImageSource.camera);
-          if (pickedFile != null) {
-            pickedFiles = [pickedFile];
+      if (source == 'gallery_multiple') {
+          pickedFiles = await picker.pickMultiImage(
+            imageQuality: 70, // Compress images to 70% quality for faster upload
+          );
+      } else if (source == 'gallery_single') {
+          final pickedFile = await picker.pickImage(
+            source: ImageSource.gallery,
+            imageQuality: 70, // Compress images to 70% quality for faster upload
+          );
+        if (pickedFile != null) {
+          pickedFiles = [pickedFile];
+        }
+      } else if (source == 'camera') {
+          final pickedFile = await picker.pickImage(
+            source: ImageSource.camera,
+            imageQuality: 70, // Compress images to 70% quality for faster upload
+          );
+        if (pickedFile != null) {
+          pickedFiles = [pickedFile];
           }
         }
+        }
       }
-    }
 
     if (pickedFiles.isEmpty) return;
 
-    // Show photo preview with category selection
-    final List<Map<String, dynamic>> photoCategories = await _showPhotoCategorySelector(pickedFiles);
-    
+        // Show photo preview with category selection
+        final List<Map<String, dynamic>> photoCategories = await _showPhotoCategorySelector(pickedFiles);
+        
     if (photoCategories.isEmpty) return;
 
     try {
@@ -492,7 +569,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
       final duringPhotos = <String>[];
       final afterPhotos = <String>[];
       
-      for (final photoData in photoCategories) {
+          for (final photoData in photoCategories) {
         final path = photoData['path'] as String;
         final category = photoData['category'] as String;
         
@@ -505,9 +582,98 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
         }
       }
       
-      // Upload photos to Baserow and get URLs
-      print('📤 Uploading ${photoCategories.length} photos to Baserow...');
+      // Get current pin from database to preserve baserow_id and existing URLs/local paths
+      final currentPinData = await DatabaseService.instance.query(
+        'pins',
+        where: 'id = ?',
+        whereArgs: [pin.id],
+      );
+      final currentPin = Pin.fromMap(currentPinData.first);
       
+      // STEP 1: Immediately save local paths and show thumbnails (OPTIMISTIC UI)
+      final mergedBeforeLocal = _mergeUrls(currentPin.beforePicturesLocal ?? '', beforePhotos);
+      final mergedDuringLocal = _mergeUrls(currentPin.duringPicturesLocal ?? '', duringPhotos);
+      final mergedAfterLocal = _mergeUrls(currentPin.afterPicturesLocal ?? '', afterPhotos);
+      
+      // Update pin with local paths only (for instant thumbnail display)
+      final pinWithLocalPaths = Pin(
+        id: currentPin.id,
+        planImageId: currentPin.planImageId,
+        x: currentPin.x,
+        y: currentPin.y,
+        title: currentPin.title,
+        description: currentPin.description,
+        assignedTo: currentPin.assignedTo,
+        status: currentPin.status,
+        createdAt: currentPin.createdAt,
+        beforePicturesUrls: currentPin.beforePicturesUrls, // Keep existing URLs
+        duringPicturesUrls: currentPin.duringPicturesUrls,
+        afterPicturesUrls: currentPin.afterPicturesUrls,
+        beforePicturesLocal: mergedBeforeLocal.isNotEmpty ? mergedBeforeLocal : null,
+        duringPicturesLocal: mergedDuringLocal.isNotEmpty ? mergedDuringLocal : null,
+        afterPicturesLocal: mergedAfterLocal.isNotEmpty ? mergedAfterLocal : null,
+        baserowId: currentPin.baserowId,
+        syncStatus: currentPin.syncStatus,
+        lastSync: currentPin.lastSync,
+        needsSync: currentPin.needsSync,
+      );
+      
+      // Save locally and refresh UI immediately (shows local thumbnails)
+      await SyncService.updatePinLocally(pinWithLocalPaths.toMap());
+      await _loadPins();
+      print('✅ Local thumbnails displayed immediately');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${photoCategories.length} photo${photoCategories.length > 1 ? 's' : ''} added to pin')),
+        );
+      }
+      
+      // STEP 2: Upload to Baserow in background and update URLs
+      print('📤 Uploading ${photoCategories.length} photos to Baserow in background...');
+      
+      // Show upload progress
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+                const SizedBox(width: 16),
+                Text('Uploading ${beforePhotos.length + duringPhotos.length + afterPhotos.length} photo(s) to server...'),
+              ],
+            ),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+      
+      // Upload in background (don't await - let it run async)
+      _uploadPhotosInBackground(pin.id!, beforePhotos, duringPhotos, afterPhotos, currentPin);
+      
+    } catch (e) {
+      print('❌ Failed to add photos: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add photos: $e')),
+        );
+      }
+    }
+  }
+  
+  // Background upload method (runs async without blocking UI)
+  Future<void> _uploadPhotosInBackground(
+    int pinId,
+    List<String> beforePhotos,
+    List<String> duringPhotos,
+    List<String> afterPhotos,
+    Pin currentPin,
+  ) async {
+    try {
       String? beforeUrls;
       String? duringUrls;
       String? afterUrls;
@@ -522,62 +688,82 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
         afterUrls = await BaserowService.uploadMultipleFiles(afterPhotos);
       }
       
-      // Get current pin from database to preserve baserow_id and existing URLs/local paths
-      final currentPinData = await DatabaseService.instance.query(
-        'pins',
-        where: 'id = ?',
-        whereArgs: [pin.id],
-      );
-      final currentPin = Pin.fromMap(currentPinData.first);
-      
-      // Merge new local paths with existing ones
-      final mergedBeforeLocal = _mergeUrls(currentPin.beforePicturesLocal ?? '', beforePhotos);
-      final mergedDuringLocal = _mergeUrls(currentPin.duringPicturesLocal ?? '', duringPhotos);
-      final mergedAfterLocal = _mergeUrls(currentPin.afterPicturesLocal ?? '', afterPhotos);
-      
       // Merge new URLs with existing ones
       final mergedBeforeUrls = _mergeUrls(currentPin.beforePicturesUrls ?? '', [beforeUrls ?? '']);
       final mergedDuringUrls = _mergeUrls(currentPin.duringPicturesUrls ?? '', [duringUrls ?? '']);
       final mergedAfterUrls = _mergeUrls(currentPin.afterPicturesUrls ?? '', [afterUrls ?? '']);
       
-      final updatedPin = Pin(
-        id: currentPin.id,
-        planImageId: currentPin.planImageId,
-        x: currentPin.x,
-        y: currentPin.y,
-        title: currentPin.title,
-        description: currentPin.description,
-        assignedTo: currentPin.assignedTo,
-        status: currentPin.status,
-        createdAt: currentPin.createdAt,
+      // Get latest pin data (might have been updated during upload)
+      final latestPinData = await DatabaseService.instance.query(
+        'pins',
+        where: 'id = ?',
+        whereArgs: [pinId],
+      );
+      final latestPin = Pin.fromMap(latestPinData.first);
+      
+      // Update with URLs (keeping local paths)
+      final pinWithUrls = Pin(
+        id: latestPin.id,
+        planImageId: latestPin.planImageId,
+        x: latestPin.x,
+        y: latestPin.y,
+        title: latestPin.title,
+        description: latestPin.description,
+        assignedTo: latestPin.assignedTo,
+        status: latestPin.status,
+        createdAt: latestPin.createdAt,
         beforePicturesUrls: mergedBeforeUrls.isNotEmpty ? mergedBeforeUrls : null,
         duringPicturesUrls: mergedDuringUrls.isNotEmpty ? mergedDuringUrls : null,
         afterPicturesUrls: mergedAfterUrls.isNotEmpty ? mergedAfterUrls : null,
-        beforePicturesLocal: mergedBeforeLocal.isNotEmpty ? mergedBeforeLocal : null,
-        duringPicturesLocal: mergedDuringLocal.isNotEmpty ? mergedDuringLocal : null,
-        afterPicturesLocal: mergedAfterLocal.isNotEmpty ? mergedAfterLocal : null,
-        baserowId: currentPin.baserowId,
-        syncStatus: currentPin.syncStatus,
-        lastSync: currentPin.lastSync,
-        needsSync: currentPin.needsSync,
+        beforePicturesLocal: latestPin.beforePicturesLocal, // Keep local paths
+        duringPicturesLocal: latestPin.duringPicturesLocal,
+        afterPicturesLocal: latestPin.afterPicturesLocal,
+        baserowId: latestPin.baserowId,
+        syncStatus: latestPin.syncStatus,
+        lastSync: latestPin.lastSync,
+        needsSync: latestPin.needsSync,
       );
       
-      await SyncService.updatePinLocally(updatedPin.toMap());
+      // Update with URLs and sync to Baserow
+      await SyncService.updatePinLocally(pinWithUrls.toMap());
       await SyncService.performFullSync();
-      print('✅ Sync completed after adding photos');
-      await _loadPins();
-      print('✅ Pins reloaded from database');
+      print('✅ Background upload completed and synced to Baserow');
       
+      // Show success message
       if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars(); // Clear the "Uploading..." message
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${photoCategories.length} photo${photoCategories.length > 1 ? 's' : ''} added to pin')),
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 16),
+                Text('Photos uploaded successfully!'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
         );
+        // Refresh UI to show uploaded status
+        await _loadPins();
       }
     } catch (e) {
-      print('❌ Failed to add photos: $e');
+      print('❌ Background upload failed: $e');
       if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add photos: $e')),
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error, color: Colors.white),
+                const SizedBox(width: 16),
+                Expanded(child: Text('Upload failed: $e')),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
     }
@@ -845,29 +1031,123 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
 
   Future<void> _changePhotoCategory(Pin pin, Map<String, dynamic> photo, String newCategory) async {
     try {
-      // Update in database if it has an ID
-      if (photo['id'] != null) {
-        await DatabaseService.instance.update('pin_photos', {
-          'category': newCategory,
-        }, photo['id']);
+      final imagePath = photo['image_path'] as String;
+      final oldCategory = photo['category'] as String;
+      final isUrl = photo['is_url'] as bool? ?? false;
+      
+      // Get current pin from database
+      final currentPinData = await DatabaseService.instance.query(
+        'pins',
+        where: 'id = ?',
+        whereArgs: [pin.id],
+      );
+      
+      if (currentPinData.isEmpty) return;
+      
+      final currentPin = Pin.fromMap(currentPinData.first);
+      
+      // Remove from old category
+      String? oldUrls;
+      String? oldLocal;
+      if (oldCategory == 'before') {
+        oldUrls = currentPin.beforePicturesUrls;
+        oldLocal = currentPin.beforePicturesLocal;
+      } else if (oldCategory == 'during') {
+        oldUrls = currentPin.duringPicturesUrls;
+        oldLocal = currentPin.duringPicturesLocal;
+      } else if (oldCategory == 'after') {
+        oldUrls = currentPin.afterPicturesUrls;
+        oldLocal = currentPin.afterPicturesLocal;
       }
       
-      // Update local state
-      setState(() {
-        if (_pinPhotos.containsKey(pin.id)) {
-          final photoIndex = _pinPhotos[pin.id!]!.indexWhere((p) => p['image_path'] == photo['image_path']);
-          if (photoIndex != -1) {
-            _pinPhotos[pin.id!]![photoIndex]['category'] = newCategory;
-          }
-        }
-      });
+      // Remove the image from old category
+      final oldUrlsList = oldUrls?.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty && e != imagePath).toList() ?? [];
+      final oldLocalList = oldLocal?.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty && e != imagePath).toList() ?? [];
+      
+      // Add to new category
+      String? newUrls;
+      String? newLocal;
+      if (newCategory == 'before') {
+        newUrls = currentPin.beforePicturesUrls;
+        newLocal = currentPin.beforePicturesLocal;
+      } else if (newCategory == 'during') {
+        newUrls = currentPin.duringPicturesUrls;
+        newLocal = currentPin.duringPicturesLocal;
+      } else if (newCategory == 'after') {
+        newUrls = currentPin.afterPicturesUrls;
+        newLocal = currentPin.afterPicturesLocal;
+      }
+      
+      final newUrlsList = newUrls?.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList() ?? [];
+      final newLocalList = newLocal?.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList() ?? [];
+      
+      if (isUrl) {
+        newUrlsList.add(imagePath);
+      } else {
+        newLocalList.add(imagePath);
+      }
+      
+      // Create updated pin
+      final updatedPin = Pin(
+        id: currentPin.id,
+        planImageId: currentPin.planImageId,
+        x: currentPin.x,
+        y: currentPin.y,
+        title: currentPin.title,
+        description: currentPin.description,
+        assignedTo: currentPin.assignedTo,
+        status: currentPin.status,
+        createdAt: currentPin.createdAt,
+        beforePicturesUrls: oldCategory == 'before' 
+            ? (oldUrlsList.isEmpty ? null : oldUrlsList.join(','))
+            : newCategory == 'before'
+                ? (newUrlsList.isEmpty ? null : newUrlsList.join(','))
+                : currentPin.beforePicturesUrls,
+        duringPicturesUrls: oldCategory == 'during'
+            ? (oldUrlsList.isEmpty ? null : oldUrlsList.join(','))
+            : newCategory == 'during'
+                ? (newUrlsList.isEmpty ? null : newUrlsList.join(','))
+                : currentPin.duringPicturesUrls,
+        afterPicturesUrls: oldCategory == 'after'
+            ? (oldUrlsList.isEmpty ? null : oldUrlsList.join(','))
+            : newCategory == 'after'
+                ? (newUrlsList.isEmpty ? null : newUrlsList.join(','))
+                : currentPin.afterPicturesUrls,
+        beforePicturesLocal: oldCategory == 'before'
+            ? (oldLocalList.isEmpty ? null : oldLocalList.join(','))
+            : newCategory == 'before'
+                ? (newLocalList.isEmpty ? null : newLocalList.join(','))
+                : currentPin.beforePicturesLocal,
+        duringPicturesLocal: oldCategory == 'during'
+            ? (oldLocalList.isEmpty ? null : oldLocalList.join(','))
+            : newCategory == 'during'
+                ? (newLocalList.isEmpty ? null : newLocalList.join(','))
+                : currentPin.duringPicturesLocal,
+        afterPicturesLocal: oldCategory == 'after'
+            ? (oldLocalList.isEmpty ? null : oldLocalList.join(','))
+            : newCategory == 'after'
+                ? (newLocalList.isEmpty ? null : newLocalList.join(','))
+                : currentPin.afterPicturesLocal,
+        baserowId: currentPin.baserowId,
+        syncStatus: currentPin.syncStatus,
+        lastSync: currentPin.lastSync,
+        needsSync: currentPin.needsSync,
+      );
+      
+      // Update locally and sync to Baserow
+      await SyncService.updatePinLocally(updatedPin.toMap());
+      await SyncService.performFullSync();
+      
+      // Reload pins
+      await _loadPins();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Photo category changed to $newCategory')),
+          SnackBar(content: Text('Photo moved to $newCategory category')),
         );
         }
       } catch (e) {
+      print('❌ Failed to change photo category: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to change category: $e')),
@@ -904,9 +1184,15 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
       XFile? newPhoto;
 
       if (source == 'camera') {
-        newPhoto = await picker.pickImage(source: ImageSource.camera);
+        newPhoto = await picker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: 70, // Compress images to 70% quality for faster upload
+        );
       } else if (source == 'gallery') {
-        newPhoto = await picker.pickImage(source: ImageSource.gallery);
+        newPhoto = await picker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 70, // Compress images to 70% quality for faster upload
+        );
       }
 
       if (newPhoto != null) {
@@ -946,17 +1232,80 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
 
   Future<void> _deletePhoto(Pin pin, Map<String, dynamic> photo) async {
     try {
-      // Delete from database if it has an ID
-      if (photo['id'] != null) {
-        await DatabaseService.instance.delete('pin_photos', photo['id']);
+      final imagePath = photo['image_path'] as String;
+      final category = photo['category'] as String;
+      final isUrl = photo['is_url'] as bool? ?? false;
+      
+      // Get current pin from database
+      final currentPinData = await DatabaseService.instance.query(
+        'pins',
+        where: 'id = ?',
+        whereArgs: [pin.id],
+      );
+      
+      if (currentPinData.isEmpty) return;
+      
+      final currentPin = Pin.fromMap(currentPinData.first);
+      
+      // Remove from the appropriate category
+      String? urls;
+      String? local;
+      if (category == 'before') {
+        urls = currentPin.beforePicturesUrls;
+        local = currentPin.beforePicturesLocal;
+      } else if (category == 'during') {
+        urls = currentPin.duringPicturesUrls;
+        local = currentPin.duringPicturesLocal;
+      } else if (category == 'after') {
+        urls = currentPin.afterPicturesUrls;
+        local = currentPin.afterPicturesLocal;
       }
       
-      // Remove from local state
-      setState(() {
-        if (_pinPhotos.containsKey(pin.id)) {
-          _pinPhotos[pin.id!]!.removeWhere((p) => p['image_path'] == photo['image_path']);
-        }
-      });
+      // Remove the image from the lists
+      final urlsList = urls?.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty && e != imagePath).toList() ?? [];
+      final localList = local?.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty && e != imagePath).toList() ?? [];
+      
+      // Create updated pin
+      final updatedPin = Pin(
+        id: currentPin.id,
+        planImageId: currentPin.planImageId,
+        x: currentPin.x,
+        y: currentPin.y,
+        title: currentPin.title,
+        description: currentPin.description,
+        assignedTo: currentPin.assignedTo,
+        status: currentPin.status,
+        createdAt: currentPin.createdAt,
+        beforePicturesUrls: category == 'before' 
+            ? (urlsList.isEmpty ? null : urlsList.join(','))
+            : currentPin.beforePicturesUrls,
+        duringPicturesUrls: category == 'during'
+            ? (urlsList.isEmpty ? null : urlsList.join(','))
+            : currentPin.duringPicturesUrls,
+        afterPicturesUrls: category == 'after'
+            ? (urlsList.isEmpty ? null : urlsList.join(','))
+            : currentPin.afterPicturesUrls,
+        beforePicturesLocal: category == 'before'
+            ? (localList.isEmpty ? null : localList.join(','))
+            : currentPin.beforePicturesLocal,
+        duringPicturesLocal: category == 'during'
+            ? (localList.isEmpty ? null : localList.join(','))
+            : currentPin.duringPicturesLocal,
+        afterPicturesLocal: category == 'after'
+            ? (localList.isEmpty ? null : localList.join(','))
+            : currentPin.afterPicturesLocal,
+        baserowId: currentPin.baserowId,
+        syncStatus: currentPin.syncStatus,
+        lastSync: currentPin.lastSync,
+        needsSync: currentPin.needsSync,
+      );
+      
+      // Update locally and sync to Baserow
+      await SyncService.updatePinLocally(updatedPin.toMap());
+      await SyncService.performFullSync();
+      
+      // Reload pins
+      await _loadPins();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -964,6 +1313,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
         );
       }
     } catch (e) {
+      print('❌ Failed to delete photo: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to delete photo: $e')),
@@ -1017,21 +1367,21 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
                         },
                       )
                     : Image.file(
-                        File(imagePath),
-                        fit: BoxFit.contain,
-                        width: double.infinity,
-                        height: double.infinity,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            width: double.infinity,
-                            height: double.infinity,
-                            color: Colors.grey[800],
-                            child: const Center(
-                              child: Icon(Icons.image, color: Colors.white, size: 64),
-                            ),
-                          );
-                        },
+                  File(imagePath),
+                  fit: BoxFit.contain,
+                  width: double.infinity,
+                  height: double.infinity,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Container(
+                      width: double.infinity,
+                      height: double.infinity,
+                      color: Colors.grey[800],
+                      child: const Center(
+                        child: Icon(Icons.image, color: Colors.white, size: 64),
                       ),
+                    );
+                  },
+                ),
               ),
             ),
             // Close button
@@ -1200,12 +1550,54 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
                           }
                         },
               child: Center(
-                          child: Image.file(
-                            File(currentPlanImage.imagePath),
-                    fit: BoxFit.contain,
-                            width: double.infinity,
-                            height: double.infinity,
-                          ),
+                          child: currentPlanImage.imagePath.startsWith('http://') || currentPlanImage.imagePath.startsWith('https://')
+                              ? Image.network(
+                                  currentPlanImage.imagePath,
+                                  fit: BoxFit.contain,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      color: Colors.grey[800],
+                                      child: const Center(
+                                        child: Icon(Icons.image, color: Colors.white, size: 64),
+                                      ),
+                                    );
+                                  },
+                                  loadingBuilder: (context, child, loadingProgress) {
+                                    if (loadingProgress == null) return child;
+                                    return Container(
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      color: Colors.grey[800],
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          value: loadingProgress.expectedTotalBytes != null
+                                              ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                                              : null,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                )
+                              : Image.file(
+                                  File(currentPlanImage.imagePath),
+                                  fit: BoxFit.contain,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      color: Colors.grey[800],
+                                      child: const Center(
+                                        child: Icon(Icons.image, color: Colors.white, size: 64),
+                                      ),
+                                    );
+                                  },
+                                ),
                         ),
                       ),
                       
@@ -1535,15 +1927,15 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
                                                           },
                                                         )
                                                       : Image.file(
-                                                          File(photo['image_path']),
-                                                          fit: BoxFit.cover,
-                                                          errorBuilder: (context, error, stackTrace) {
-                                                            return Container(
-                                                              color: Colors.grey[300],
-                                                              child: const Icon(Icons.image, color: Colors.grey, size: 20),
-                                                            );
-                                                          },
-                                                        ),
+                                                    File(photo['image_path']),
+                                                    fit: BoxFit.cover,
+                                                    errorBuilder: (context, error, stackTrace) {
+                                                      return Container(
+                                                        color: Colors.grey[300],
+                                                        child: const Icon(Icons.image, color: Colors.grey, size: 20),
+                                                      );
+                                                    },
+                                                  ),
                                                 ),
                                               ),
                                             );
