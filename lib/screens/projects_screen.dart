@@ -127,39 +127,11 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       final syncResult = await SyncService.performFullSync();
       
       if (syncResult.success) {
-        // Reload projects after successful sync
         await _reloadProjectsAfterSync();
-        
-        // Show success message
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Sync completed: ${syncResult.projectsSynced} projects, ${syncResult.changesUploaded} changes uploaded'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        // Show error message
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Sync failed: ${syncResult.message}'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
       }
     } catch (e) {
       print('❌ Sync failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sync failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      // swallow
     }
   }
 

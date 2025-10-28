@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import '../theme/premium_theme.dart';
 import '../services/auth_service.dart';
 import '../services/sync_service.dart';
-import '../widgets/sync_status_widget.dart';
 import 'timesheet_screen.dart';
 import 'login_screen.dart';
 import 'debug_screen.dart';
@@ -74,10 +73,11 @@ class _PremiumHomeScreenState extends State<PremiumHomeScreen>
 
   Future<void> _loadUserInfo() async {
     final userInfo = await AuthService.getCurrentUser();
+    if (!mounted) return;
     setState(() {
       _username = userInfo['username'];
       _userRole = userInfo['userRole'];
-      _name = userInfo['name'];
+      _name = userInfo['username']; // show username as primary
     });
   }
 
@@ -207,8 +207,7 @@ class _PremiumHomeScreenState extends State<PremiumHomeScreen>
                           SizedBox(height: MediaQuery.of(context).size.width > 1200 ? 48 : 40),
                           _buildWelcomeSection(),
                           SizedBox(height: MediaQuery.of(context).size.width > 1200 ? 48 : 40),
-                          const SyncStatusWidget(),
-                          SizedBox(height: MediaQuery.of(context).size.width > 1200 ? 48 : 40),
+                          // Sync status widget removed as requested
                           _buildModulesGrid(),
                         ],
                       ),
@@ -270,7 +269,7 @@ class _PremiumHomeScreenState extends State<PremiumHomeScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _name ?? _username ?? 'User',
+                  _username ?? 'User',
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,

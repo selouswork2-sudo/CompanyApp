@@ -103,40 +103,12 @@ class _TimesheetScreenState extends State<TimesheetScreen> with TickerProviderSt
       final syncResult = await SyncService.performFullSync();
       
       if (syncResult.success) {
-        // Reload data after successful sync
         await _loadProjects();
         await _loadAllPlans();
         await _loadTimesheets();
-        
-        // Show success message
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Sync completed: ${syncResult.projectsSynced} projects, ${syncResult.changesUploaded} changes uploaded'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        // Show error message
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Sync failed: ${syncResult.message}'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sync failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      // swallow
     }
   }
 

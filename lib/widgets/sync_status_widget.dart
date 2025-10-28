@@ -66,15 +66,9 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
 
     try {
       final result = await SyncService.performFullSync();
-      
       if (result.success) {
-        _showSnackBar('Sync completed successfully');
         await _loadSyncStatus();
-      } else {
-        _showSnackBar('Sync failed: ${result.message}', isError: true);
       }
-    } catch (e) {
-      _showSnackBar('Sync error: $e', isError: true);
     } finally {
       setState(() {
         _isSyncing = false;
@@ -82,18 +76,7 @@ class _SyncStatusWidgetState extends State<SyncStatusWidget> {
     }
   }
 
-  void _showSnackBar(String message, {bool isError = false}) {
-    if (!mounted) return;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? PremiumTheme.errorColor : PremiumTheme.successColor,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
+  void _showSnackBar(String message, {bool isError = false}) {}
 
   @override
   Widget build(BuildContext context) {
