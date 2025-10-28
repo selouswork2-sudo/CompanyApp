@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -23,6 +24,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   bool _isLoading = true;
   bool _isOnline = true;
   final TextEditingController _searchController = TextEditingController();
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   @override
   void initState() {
@@ -58,25 +60,30 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   Future<void> _checkConnectivity() async {
     final connectivityResult = await Connectivity().checkConnectivity();
-    setState(() {
-      _isOnline = connectivityResult != ConnectivityResult.none;
-    });
+    if (mounted) {
+      setState(() {
+        _isOnline = connectivityResult != ConnectivityResult.none;
+      });
+    }
     
     // Listen for connectivity changes
-    Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
-      setState(() {
-        _isOnline = results.first != ConnectivityResult.none;
-      });
-      
-      // Auto-sync when connection is restored
-      if (_isOnline) {
-        _syncWithBaserow();
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      if (mounted) {
+        setState(() {
+          _isOnline = results.first != ConnectivityResult.none;
+        });
+        
+        // Auto-sync when connection is restored
+        if (_isOnline) {
+          _syncWithBaserow();
+        }
       }
     });
   }
 
   @override
   void dispose() {
+    _connectivitySubscription?.cancel();
     _searchController.dispose();
     super.dispose();
   }

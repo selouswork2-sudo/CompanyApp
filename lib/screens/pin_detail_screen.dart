@@ -5,6 +5,7 @@ import '../models/pin.dart';
 import '../models/plan_image.dart';
 import '../models/pin_comment.dart';
 import '../services/database_service.dart';
+import '../services/sync_service.dart';
 import 'plan_viewer_screen.dart';
 
 class PinDetailScreen extends StatefulWidget {
@@ -92,9 +93,25 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
     );
 
     if (widget.pin == null) {
-      await DatabaseService.instance.insert('pins', pin.toMap());
+      // Create new pin
+      await SyncService.createPinLocally(pin.toMap());
+      
+      // Trigger background sync immediately
+      SyncService.performFullSync().then((_) {
+        print('✅ Background sync completed after pin creation');
+      }).catchError((error) {
+        print('⚠️ Background sync failed: $error');
+      });
     } else {
-      await DatabaseService.instance.update('pins', pin.toMap(), widget.pin!.id!);
+      // Update existing pin
+      await SyncService.updatePinLocally(pin.toMap());
+      
+      // Trigger background sync immediately
+      SyncService.performFullSync().then((_) {
+        print('✅ Background sync completed after pin update');
+      }).catchError((error) {
+        print('⚠️ Background sync failed: $error');
+      });
     }
 
     if (mounted) {

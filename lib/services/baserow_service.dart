@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 class BaserowService {
   // Baserow configuration
@@ -22,6 +24,12 @@ class BaserowService {
   
   // Plans Table (Table ID: 755) - Corrected from 724 to 755
   static const int _plansTableId = 755;
+  
+  // Photos Table (Table ID: 758)
+  static const int _photosTableId = 758;
+  
+  // Pins Table (Table ID: 759)
+  static const int _pinsTableId = 759;
   
   /// Get user by username
   static Future<Map<String, dynamic>?> getUser(String username) async {
@@ -342,5 +350,253 @@ class BaserowService {
       return status['value'] ?? 'Active';
     }
     return status.toString();
+  }
+
+  // ==================== PHOTOS CRUD ====================
+
+  /// Create a new photo in Baserow
+  static Future<Map<String, dynamic>> createPhoto(Map<String, dynamic> data) async {
+    final url = '$_baseUrl/database/rows/table/$_photosTableId/';
+    
+    // Map photo data to Baserow fields
+    final baserowData = {
+      'field_7260': data['name'] ?? '', // Photo name
+      'field_7261': data['plan_id'] ?? '', // Plan ID (as string/job_number)
+      'field_7262': data['image_path'] ?? '', // Image path
+    };
+    
+    print('🔄 Creating photo in Baserow with data: $baserowData');
+    
+    final response = await http.post(
+      Uri.parse(url),
+      headers: _headers,
+      body: json.encode(baserowData),
+    );
+    
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      final responseData = json.decode(response.body);
+      print('✅ Photo created in Baserow with ID: ${responseData['id']}');
+      return responseData;
+    } else {
+      print('❌ Failed to create photo in Baserow: ${response.statusCode}');
+      print('❌ Response body: ${response.body}');
+      throw Exception('Failed to create photo: ${response.statusCode}');
+    }
+  }
+
+  /// Update an existing photo in Baserow
+  static Future<void> updatePhoto(int baserowId, Map<String, dynamic> data) async {
+    final url = '$_baseUrl/database/rows/table/$_photosTableId/$baserowId/';
+    
+    // Map photo data to Baserow fields
+    final baserowData = <String, dynamic>{};
+    if (data.containsKey('name')) baserowData['field_7260'] = data['name'];
+    if (data.containsKey('plan_id')) baserowData['field_7261'] = data['plan_id'];
+    if (data.containsKey('image_path')) baserowData['field_7262'] = data['image_path'];
+    
+    final response = await http.patch(
+      Uri.parse(url),
+      headers: _headers,
+      body: json.encode(baserowData),
+    );
+    
+    if (response.statusCode == 200) {
+      print('✅ Photo updated in Baserow');
+    } else {
+      print('❌ Failed to update photo in Baserow: ${response.statusCode}');
+      print('❌ Response body: ${response.body}');
+      throw Exception('Failed to update photo: ${response.statusCode}');
+    }
+  }
+
+  /// Delete a photo from Baserow
+  static Future<void> deletePhoto(int baserowId) async {
+    final url = '$_baseUrl/database/rows/table/$_photosTableId/$baserowId/';
+    
+    final response = await http.delete(Uri.parse(url), headers: _headers);
+    
+    if (response.statusCode == 200 || response.statusCode == 204) {
+      print('✅ Photo deleted from Baserow');
+    } else {
+      print('❌ Failed to delete photo from Baserow: ${response.statusCode}');
+      throw Exception('Failed to delete photo: ${response.statusCode}');
+    }
+  }
+
+  /// Get all photos from Baserow
+  static Future<List<Map<String, dynamic>>> getPhotos() async {
+    final url = '$_baseUrl/database/rows/table/$_photosTableId/';
+    
+    final response = await http.get(Uri.parse(url), headers: _headers);
+    
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final photos = List<Map<String, dynamic>>.from(data['results']);
+      print('📥 Downloaded ${photos.length} photos from Baserow');
+      return photos;
+    } else {
+      print('❌ Failed to get photos: ${response.statusCode}');
+      return [];
+    }
+  }
+
+  // ==================== PINS CRUD ====================
+
+  /// Create a new pin in Baserow
+  static Future<Map<String, dynamic>> createPin(Map<String, dynamic> data) async {
+    final url = '$_baseUrl/database/rows/table/$_pinsTableId/';
+    
+    // Map pin data to Baserow fields
+    final baserowData = {
+      'field_7269': data['job_number'] ?? '', // Job number (from plan_images->plans->job_number)
+      'field_7270': data['x'] ?? 0.0, // X coordinate
+      'field_7271': data['y'] ?? 0.0, // Y coordinate
+      'field_7272': data['title'] ?? '', // Title
+      'field_7441': data['before_pictures_urls'] ?? '', // Before pictures URLs
+      'field_7442': data['during_pictures_urls'] ?? '', // During pictures URLs
+      'field_7443': data['after_pictures_urls'] ?? '', // After pictures URLs
+    };
+    
+    print('🔄 Creating pin in Baserow with data: $baserowData');
+    
+    final response = await http.post(
+      Uri.parse(url),
+      headers: _headers,
+      body: json.encode(baserowData),
+    );
+    
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      final responseData = json.decode(response.body);
+      print('✅ Pin created in Baserow with ID: ${responseData['id']}');
+      return responseData;
+    } else {
+      print('❌ Failed to create pin in Baserow: ${response.statusCode}');
+      print('❌ Response body: ${response.body}');
+      throw Exception('Failed to create pin: ${response.statusCode}');
+    }
+  }
+
+  /// Update an existing pin in Baserow
+  static Future<void> updatePin(int baserowId, Map<String, dynamic> data) async {
+    final url = '$_baseUrl/database/rows/table/$_pinsTableId/$baserowId/';
+    
+    // Map pin data to Baserow fields
+    final baserowData = <String, dynamic>{};
+    if (data.containsKey('job_number')) baserowData['field_7269'] = data['job_number'];
+    if (data.containsKey('x')) baserowData['field_7270'] = data['x'];
+    if (data.containsKey('y')) baserowData['field_7271'] = data['y'];
+    if (data.containsKey('title')) baserowData['field_7272'] = data['title'];
+    if (data.containsKey('before_pictures_urls')) baserowData['field_7441'] = data['before_pictures_urls'] ?? '';
+    if (data.containsKey('during_pictures_urls')) baserowData['field_7442'] = data['during_pictures_urls'] ?? '';
+    if (data.containsKey('after_pictures_urls')) baserowData['field_7443'] = data['after_pictures_urls'] ?? '';
+    
+    final response = await http.patch(
+      Uri.parse(url),
+      headers: _headers,
+      body: json.encode(baserowData),
+    );
+    
+    if (response.statusCode == 200) {
+      print('✅ Pin updated in Baserow');
+    } else {
+      print('❌ Failed to update pin in Baserow: ${response.statusCode}');
+      print('❌ Response body: ${response.body}');
+      throw Exception('Failed to update pin: ${response.statusCode}');
+    }
+  }
+
+  /// Delete a pin from Baserow
+  static Future<void> deletePin(int baserowId) async {
+    final url = '$_baseUrl/database/rows/table/$_pinsTableId/$baserowId/';
+    
+    final response = await http.delete(Uri.parse(url), headers: _headers);
+    
+    if (response.statusCode == 200 || response.statusCode == 204) {
+      print('✅ Pin deleted from Baserow');
+    } else {
+      print('❌ Failed to delete pin from Baserow: ${response.statusCode}');
+      throw Exception('Failed to delete pin: ${response.statusCode}');
+    }
+  }
+
+  /// Get all pins from Baserow
+  static Future<List<Map<String, dynamic>>> getPins() async {
+    final url = '$_baseUrl/database/rows/table/$_pinsTableId/';
+    
+    final response = await http.get(Uri.parse(url), headers: _headers);
+    
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final pins = List<Map<String, dynamic>>.from(data['results']);
+      print('📥 Downloaded ${pins.length} pins from Baserow');
+      return pins;
+    } else {
+      print('❌ Failed to get pins: ${response.statusCode}');
+      return [];
+    }
+  }
+
+  // ==================== FILE UPLOAD ====================
+
+  /// Upload a single file to Baserow and return the URL
+  static Future<String?> uploadFile(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        print('❌ File does not exist: $filePath');
+        return null;
+      }
+
+      final url = '$_baseUrl/user-files/upload-file/';
+      final request = http.MultipartRequest('POST', Uri.parse(url));
+      
+      // Add authorization header
+      request.headers['Authorization'] = 'Token $_token';
+      
+      // Add file
+      final fileBytes = await file.readAsBytes();
+      final fileName = filePath.split(Platform.pathSeparator).last;
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          fileBytes,
+          filename: fileName,
+          contentType: MediaType('image', 'jpeg'),
+        ),
+      );
+
+      print('📤 Uploading file to Baserow: $fileName');
+      final response = await request.send();
+      final responseData = await response.stream.bytesToString();
+
+      if (response.statusCode == 200) {
+        final data = json.decode(responseData);
+        final uploadedUrl = data['url'] as String?;
+        print('✅ File uploaded successfully: $uploadedUrl');
+        return uploadedUrl;
+      } else {
+        print('❌ Failed to upload file: ${response.statusCode}');
+        print('❌ Response: $responseData');
+        return null;
+      }
+    } catch (e) {
+      print('❌ Error uploading file: $e');
+      return null;
+    }
+  }
+
+  /// Upload multiple files and return comma-separated URLs
+  static Future<String?> uploadMultipleFiles(List<String> filePaths) async {
+    final urls = <String>[];
+    
+    for (final filePath in filePaths) {
+      final url = await uploadFile(filePath);
+      if (url != null) {
+        urls.add(url);
+      }
+    }
+    
+    if (urls.isEmpty) return null;
+    return urls.join(',');
   }
 }

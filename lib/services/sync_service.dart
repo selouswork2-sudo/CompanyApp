@@ -246,8 +246,114 @@ class SyncService {
             await BaserowService.deletePlan(baserowId);
           } else {
             print('⚠️ Cannot delete plan: no Baserow ID found');
-        }
-        break;
+          }
+          break;
+
+        // Photos actions
+        case 'create_photo':
+          final response = await BaserowService.createPhoto(data);
+          final baserowId = response['id'];
+          if (baserowId != null && data['id'] != null) {
+            await DatabaseService.instance.update('plan_images', {
+              'baserow_id': baserowId,
+              'sync_status': 'synced',
+              'needs_sync': 0,
+              'last_sync': DateTime.now().toIso8601String(),
+            }, data['id']);
+            print('✅ Updated local photo with Baserow ID: $baserowId');
+          }
+          break;
+
+        case 'update_photo':
+          final baserowId = data['baserow_id'];
+          if (baserowId != null) {
+            await BaserowService.updatePhoto(baserowId, data);
+            if (data['id'] != null) {
+              await DatabaseService.instance.update('plan_images', {
+                'sync_status': 'synced',
+                'needs_sync': 0,
+                'last_sync': DateTime.now().toIso8601String(),
+              }, data['id']);
+            }
+          } else {
+            print('⚠️ Cannot update photo: no Baserow ID found');
+          }
+          break;
+
+        case 'delete_photo':
+          final baserowId = data['baserow_id'];
+          if (baserowId != null) {
+            await BaserowService.deletePhoto(baserowId);
+          } else {
+            print('⚠️ Cannot delete photo: no Baserow ID found');
+          }
+          break;
+
+        // Pins actions
+        case 'create_pin':
+          // Get job_number from plan_image_id
+          final planImageId = data['plan_image_id'];
+          if (planImageId != null) {
+            final planImages = await DatabaseService.instance.query(
+              'plan_images',
+              where: 'id = ?',
+              whereArgs: [planImageId],
+            );
+            
+            if (planImages.isNotEmpty) {
+              final jobId = planImages.first['job_id'];
+              if (jobId != null) {
+                final jobs = await DatabaseService.instance.query(
+                  'plans',
+                  where: 'id = ?',
+                  whereArgs: [jobId],
+                );
+                
+                if (jobs.isNotEmpty) {
+                  data['job_number'] = jobs.first['job_number'];
+                  print('🔄 Found job_number for pin: ${data['job_number']}');
+                }
+              }
+            }
+          }
+          
+          final response = await BaserowService.createPin(data);
+          final baserowId = response['id'];
+          if (baserowId != null && data['id'] != null) {
+            await DatabaseService.instance.update('pins', {
+              'baserow_id': baserowId,
+              'sync_status': 'synced',
+              'needs_sync': 0,
+              'last_sync': DateTime.now().toIso8601String(),
+            }, data['id']);
+            print('✅ Updated local pin with Baserow ID: $baserowId');
+          }
+          break;
+
+        case 'update_pin':
+          final baserowId = data['baserow_id'];
+          if (baserowId != null) {
+            await BaserowService.updatePin(baserowId, data);
+            if (data['id'] != null) {
+              await DatabaseService.instance.update('pins', {
+                'sync_status': 'synced',
+                'needs_sync': 0,
+                'last_sync': DateTime.now().toIso8601String(),
+              }, data['id']);
+            }
+          } else {
+            print('⚠️ Cannot update pin: no Baserow ID found');
+          }
+          break;
+
+        case 'delete_pin':
+          final baserowId = data['baserow_id'];
+          if (baserowId != null) {
+            await BaserowService.deletePin(baserowId);
+          } else {
+            print('⚠️ Cannot delete pin: no Baserow ID found');
+          }
+          break;
     }
     
     print('✅ Pending change uploaded successfully');
@@ -916,6 +1022,154 @@ class SyncService {
   /// Save pending change (public method)
   static Future<void> savePendingChange(String action, Map<String, dynamic> data) async {
     await _savePendingChange(action, data);
+  }
+
+  // ==================== PHOTOS SYNC ====================
+
+  /// Create photo locally and queue for Baserow sync
+  static Future<void> createPhotoLocally(Map<String, dynamic> photoData) async {
+    try {
+      // Insert into local database
+      final id = await DatabaseService.instance.insert('plan_images', photoData);
+      print('✅ Photo created locally with ID: $id');
+      
+      // Queue for Baserow sync
+      photoData['id'] = id;
+      await savePendingChange('create_photo', photoData);
+      print('✅ Photo created locally and queued for sync');
+    } catch (e) {
+      print('❌ Failed to create photo locally: $e');
+      rethrow;
+    }
+  }
+
+  /// Update photo locally and queue for Baserow sync
+  static Future<void> updatePhotoLocally(Map<String, dynamic> photoData) async {
+    try {
+      final id = photoData['id'];
+      if (id == null) throw Exception('Photo ID is required for update');
+      
+      // Update in local database
+      await DatabaseService.instance.update('plan_images', photoData, id);
+      print('✅ Photo updated locally with ID: $id');
+      
+      // Queue for Baserow sync
+      await savePendingChange('update_photo', photoData);
+      print('✅ Photo update queued for sync');
+    } catch (e) {
+      print('❌ Failed to update photo locally: $e');
+      rethrow;
+    }
+  }
+
+  /// Delete photo locally and queue for Baserow sync
+  static Future<void> deletePhotoLocally(int photoId) async {
+    try {
+      // Get photo data before deleting (to get Baserow ID)
+      final photoData = await DatabaseService.instance.query(
+        'plan_images',
+        where: 'id = ?',
+        whereArgs: [photoId],
+      );
+      
+      if (photoData.isEmpty) {
+        print('⚠️ Photo not found: $photoId');
+        return;
+      }
+      
+      final photo = photoData.first;
+      final baserowId = photo['baserow_id'];
+      
+      // Delete from local database
+      await DatabaseService.instance.delete('plan_images', photoId);
+      print('✅ Photo deleted locally with ID: $photoId');
+      
+      // Queue for Baserow sync if has Baserow ID
+      if (baserowId != null) {
+        await savePendingChange('delete_photo', {
+          'id': photoId,
+          'baserow_id': baserowId,
+        });
+        print('✅ Photo deletion queued for sync');
+      }
+    } catch (e) {
+      print('❌ Failed to delete photo locally: $e');
+      rethrow;
+    }
+  }
+
+  // ==================== PINS SYNC ====================
+
+  /// Create pin locally and queue for Baserow sync
+  static Future<void> createPinLocally(Map<String, dynamic> pinData) async {
+    try {
+      // Insert into local database
+      final id = await DatabaseService.instance.insert('pins', pinData);
+      print('✅ Pin created locally with ID: $id');
+      
+      // Queue for Baserow sync
+      pinData['id'] = id;
+      await savePendingChange('create_pin', pinData);
+      print('✅ Pin created locally and queued for sync');
+    } catch (e) {
+      print('❌ Failed to create pin locally: $e');
+      rethrow;
+    }
+  }
+
+  /// Update pin locally and queue for Baserow sync
+  static Future<void> updatePinLocally(Map<String, dynamic> pinData) async {
+    try {
+      final id = pinData['id'];
+      if (id == null) throw Exception('Pin ID is required for update');
+      
+      // Update in local database
+      await DatabaseService.instance.update('pins', pinData, id);
+      print('✅ Pin updated locally with ID: $id');
+      
+      // Queue for Baserow sync
+      await savePendingChange('update_pin', pinData);
+      print('✅ Pin update queued for sync');
+    } catch (e) {
+      print('❌ Failed to update pin locally: $e');
+      rethrow;
+    }
+  }
+
+  /// Delete pin locally and queue for Baserow sync
+  static Future<void> deletePinLocally(int pinId) async {
+    try {
+      // Get pin data before deleting (to get Baserow ID)
+      final pinData = await DatabaseService.instance.query(
+        'pins',
+        where: 'id = ?',
+        whereArgs: [pinId],
+      );
+      
+      if (pinData.isEmpty) {
+        print('⚠️ Pin not found: $pinId');
+        return;
+      }
+      
+      final pin = pinData.first;
+      final baserowId = pin['baserow_id'];
+      
+      // Delete from local database
+      await DatabaseService.instance.delete('pins', pinId);
+      print('✅ Pin deleted locally with ID: $pinId');
+      
+      // Queue for Baserow sync if has Baserow ID
+      if (baserowId != null) {
+        await savePendingChange('delete_pin', {
+          'id': pinId,
+          'baserow_id': baserowId,
+        });
+        print('✅ Pin deletion queued for sync');
+      }
+    } catch (e) {
+      print('❌ Failed to delete pin locally: $e');
+      rethrow;
+    }
   }
 }
 

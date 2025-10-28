@@ -6,6 +6,8 @@ import '../models/plan_image.dart';
 import '../models/pin.dart';
 import '../models/pin_comment.dart';
 import '../services/database_service.dart';
+import '../services/sync_service.dart';
+import '../services/baserow_service.dart';
 import 'pin_detail_screen.dart';
 
 class _PhotoCategorySelector extends StatefulWidget {
@@ -243,18 +245,61 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
 
   Future<void> _loadPinPhotos() async {
     for (final pin in _pins) {
-      final photoMaps = await DatabaseService.instance.query(
-        'pin_photos',
-        where: 'pin_id = ?',
-        whereArgs: [pin.id],
-      );
+      final photos = <Map<String, dynamic>>[];
+      
+      // Parse before pictures (prioritize local, then URL)
+      if (pin.beforePicturesLocal != null && pin.beforePicturesLocal!.isNotEmpty) {
+        final localPaths = pin.beforePicturesLocal!.split(',');
+        for (final path in localPaths) {
+          if (path.trim().isNotEmpty) {
+            photos.add({'image_path': path.trim(), 'category': 'before', 'is_url': false});
+          }
+        }
+      } else if (pin.beforePicturesUrls != null && pin.beforePicturesUrls!.isNotEmpty) {
+        final beforeUrls = pin.beforePicturesUrls!.split(',');
+        for (final url in beforeUrls) {
+          if (url.trim().isNotEmpty) {
+            photos.add({'image_path': url.trim(), 'category': 'before', 'is_url': true});
+          }
+        }
+      }
+      
+      // Parse during pictures (prioritize local, then URL)
+      if (pin.duringPicturesLocal != null && pin.duringPicturesLocal!.isNotEmpty) {
+        final localPaths = pin.duringPicturesLocal!.split(',');
+        for (final path in localPaths) {
+          if (path.trim().isNotEmpty) {
+            photos.add({'image_path': path.trim(), 'category': 'during', 'is_url': false});
+          }
+        }
+      } else if (pin.duringPicturesUrls != null && pin.duringPicturesUrls!.isNotEmpty) {
+        final duringUrls = pin.duringPicturesUrls!.split(',');
+        for (final url in duringUrls) {
+          if (url.trim().isNotEmpty) {
+            photos.add({'image_path': url.trim(), 'category': 'during', 'is_url': true});
+          }
+        }
+      }
+      
+      // Parse after pictures (prioritize local, then URL)
+      if (pin.afterPicturesLocal != null && pin.afterPicturesLocal!.isNotEmpty) {
+        final localPaths = pin.afterPicturesLocal!.split(',');
+        for (final path in localPaths) {
+          if (path.trim().isNotEmpty) {
+            photos.add({'image_path': path.trim(), 'category': 'after', 'is_url': false});
+          }
+        }
+      } else if (pin.afterPicturesUrls != null && pin.afterPicturesUrls!.isNotEmpty) {
+        final afterUrls = pin.afterPicturesUrls!.split(',');
+        for (final url in afterUrls) {
+          if (url.trim().isNotEmpty) {
+            photos.add({'image_path': url.trim(), 'category': 'after', 'is_url': true});
+          }
+        }
+      }
       
       setState(() {
-        _pinPhotos[pin.id!] = photoMaps.map((e) => {
-          'id': e['id'],
-          'image_path': e['image_path'] as String,
-          'category': e['category'] as String? ?? 'before',
-        }).toList();
+        _pinPhotos[pin.id!] = photos;
       });
     }
   }
@@ -272,7 +317,16 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
       createdAt: DateTime.now(),
     );
 
-    await DatabaseService.instance.insert('pins', newPin.toMap());
+    // Use SyncService to create pin locally and queue for sync
+    await SyncService.createPinLocally(newPin.toMap());
+    
+    // Trigger background sync immediately
+    SyncService.performFullSync().then((_) {
+      print('✅ Background sync completed after pin creation');
+    }).catchError((error) {
+      print('⚠️ Background sync failed: $error');
+    });
+    
     setState(() {
       _pins.add(newPin);
       _currentMode = 'normal'; // Reset mode after adding
@@ -324,156 +378,216 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
   }
 
   Future<void> _updatePinPosition(Pin pin, double newX, double newY) async {
+    // Get latest pin data from database to ensure we have baserow_id and photo URLs
+    final currentPinData = await DatabaseService.instance.query(
+      'pins',
+      where: 'id = ?',
+      whereArgs: [pin.id],
+    );
+    
+    if (currentPinData.isEmpty) {
+      print('⚠️ Pin not found in database: ${pin.id}');
+      return;
+    }
+    
+    final currentPin = Pin.fromMap(currentPinData.first);
+    
     final updatedPin = Pin(
-      id: pin.id,
-      planImageId: pin.planImageId,
+      id: currentPin.id,
+      planImageId: currentPin.planImageId,
       x: newX,
       y: newY,
-      title: pin.title,
-      description: pin.description,
-      assignedTo: pin.assignedTo,
-      status: pin.status,
-      createdAt: pin.createdAt,
+      title: currentPin.title,
+      description: currentPin.description,
+      assignedTo: currentPin.assignedTo,
+      status: currentPin.status,
+      createdAt: currentPin.createdAt,
+      beforePicturesUrls: currentPin.beforePicturesUrls,
+      duringPicturesUrls: currentPin.duringPicturesUrls,
+      afterPicturesUrls: currentPin.afterPicturesUrls,
+      beforePicturesLocal: currentPin.beforePicturesLocal,
+      duringPicturesLocal: currentPin.duringPicturesLocal,
+      afterPicturesLocal: currentPin.afterPicturesLocal,
+      baserowId: currentPin.baserowId,
+      syncStatus: currentPin.syncStatus,
+      lastSync: currentPin.lastSync,
+      needsSync: currentPin.needsSync,
     );
 
-    await DatabaseService.instance.update(
-          'pins',
-      updatedPin.toMap(),
-      pin.id!,
-    );
-
-    setState(() {
-      final index = _pins.indexWhere((p) => p.id == pin.id);
-      if (index != -1) {
-        _pins[index] = updatedPin;
-      }
-    });
+    // Use SyncService to update locally and sync to Baserow
+    await SyncService.updatePinLocally(updatedPin.toMap());
+    await SyncService.performFullSync();
+    print('✅ Sync completed after pin move');
+    await _loadPins();
+    print('✅ Pins reloaded from database');
   }
 
   Future<void> _addPhotoToPin(Pin pin) async {
     // Check if running on Windows
     final isWindows = Platform.isWindows;
     
+    List<XFile> pickedFiles = [];
+    
     if (isWindows) {
       // For Windows, use file picker to select images
       final picker = ImagePicker();
-      List<XFile> pickedFiles = [];
-      
-      // Pick multiple images from gallery on Windows
       pickedFiles = await picker.pickMultiImage();
-      
-      if (pickedFiles.isNotEmpty) {
-        // Show photo preview with category selection
-        final List<Map<String, dynamic>> photoCategories = await _showPhotoCategorySelector(pickedFiles);
-        
-        if (photoCategories.isNotEmpty) {
-          // Save all photos to database
-          for (final photoData in photoCategories) {
-            await DatabaseService.instance.insert('pin_photos', {
-              'pin_id': pin.id,
-              'image_path': photoData['path'],
-              'category': photoData['category'],
-              'created_at': DateTime.now().toIso8601String(),
-            });
-            
-            // Add photo to local state
-    setState(() {
-              if (!_pinPhotos.containsKey(pin.id)) {
-                _pinPhotos[pin.id!] = [];
-              }
-              _pinPhotos[pin.id!]!.add({
-                'id': null, // Will be set by database
-                'image_path': photoData['path'],
-                'category': photoData['category'],
-              });
-            });
-          }
-          
-          print('${photoCategories.length} photo${photoCategories.length > 1 ? 's' : ''} added to pin');
-        }
-      }
-      return;
-    }
-    
-    // Original code for mobile platforms
-    final String? source = await showModalBottomSheet<String>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Camera'),
-              onTap: () => Navigator.pop(context, 'camera'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Gallery (Single)'),
-              onTap: () => Navigator.pop(context, 'gallery_single'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Gallery (Multiple)'),
-              onTap: () => Navigator.pop(context, 'gallery_multiple'),
-            ),
-          ],
+    } else {
+      // For mobile platforms, show source selection
+      final String? source = await showModalBottomSheet<String>(
+        context: context,
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: const Text('Camera'),
+                onTap: () => Navigator.pop(context, 'camera'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: const Text('Gallery (Single)'),
+                onTap: () => Navigator.pop(context, 'gallery_single'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Gallery (Multiple)'),
+                onTap: () => Navigator.pop(context, 'gallery_multiple'),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
 
-    if (source != null) {
-      final picker = ImagePicker();
-      List<XFile> pickedFiles = [];
+      if (source != null) {
+        final picker = ImagePicker();
 
-      if (source == 'gallery_multiple') {
-        // Pick multiple images from gallery
-        pickedFiles = await picker.pickMultiImage();
-      } else if (source == 'gallery_single') {
-        // Pick single image from gallery
-        final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-        if (pickedFile != null) {
-          pickedFiles = [pickedFile];
-        }
-      } else if (source == 'camera') {
-        // Pick single image from camera
-        final pickedFile = await picker.pickImage(source: ImageSource.camera);
-        if (pickedFile != null) {
-          pickedFiles = [pickedFile];
-        }
-      }
-
-      if (pickedFiles.isNotEmpty) {
-        // Show photo preview with category selection
-        final List<Map<String, dynamic>> photoCategories = await _showPhotoCategorySelector(pickedFiles);
-        
-        if (photoCategories.isNotEmpty) {
-          // Save all photos to database
-          for (final photoData in photoCategories) {
-            await DatabaseService.instance.insert('pin_photos', {
-              'pin_id': pin.id,
-              'image_path': photoData['path'],
-              'category': photoData['category'],
-              'created_at': DateTime.now().toIso8601String(),
-            });
-            
-            // Add photo to local state
-    setState(() {
-              if (!_pinPhotos.containsKey(pin.id)) {
-                _pinPhotos[pin.id!] = [];
-              }
-              _pinPhotos[pin.id!]!.add({
-                'id': null, // Will be set by database
-                'image_path': photoData['path'],
-                'category': photoData['category'],
-              });
-            });
+        if (source == 'gallery_multiple') {
+          pickedFiles = await picker.pickMultiImage();
+        } else if (source == 'gallery_single') {
+          final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+          if (pickedFile != null) {
+            pickedFiles = [pickedFile];
           }
-          
-          print('${photoCategories.length} photo${photoCategories.length > 1 ? 's' : ''} added to pin');
+        } else if (source == 'camera') {
+          final pickedFile = await picker.pickImage(source: ImageSource.camera);
+          if (pickedFile != null) {
+            pickedFiles = [pickedFile];
+          }
         }
       }
     }
+
+    if (pickedFiles.isEmpty) return;
+
+    // Show photo preview with category selection
+    final List<Map<String, dynamic>> photoCategories = await _showPhotoCategorySelector(pickedFiles);
+    
+    if (photoCategories.isEmpty) return;
+
+    try {
+      // Organize photos by category
+      final beforePhotos = <String>[];
+      final duringPhotos = <String>[];
+      final afterPhotos = <String>[];
+      
+      for (final photoData in photoCategories) {
+        final path = photoData['path'] as String;
+        final category = photoData['category'] as String;
+        
+        if (category == 'before') {
+          beforePhotos.add(path);
+        } else if (category == 'during') {
+          duringPhotos.add(path);
+        } else if (category == 'after') {
+          afterPhotos.add(path);
+        }
+      }
+      
+      // Upload photos to Baserow and get URLs
+      print('📤 Uploading ${photoCategories.length} photos to Baserow...');
+      
+      String? beforeUrls;
+      String? duringUrls;
+      String? afterUrls;
+      
+      if (beforePhotos.isNotEmpty) {
+        beforeUrls = await BaserowService.uploadMultipleFiles(beforePhotos);
+      }
+      if (duringPhotos.isNotEmpty) {
+        duringUrls = await BaserowService.uploadMultipleFiles(duringPhotos);
+      }
+      if (afterPhotos.isNotEmpty) {
+        afterUrls = await BaserowService.uploadMultipleFiles(afterPhotos);
+      }
+      
+      // Get current pin from database to preserve baserow_id and existing URLs/local paths
+      final currentPinData = await DatabaseService.instance.query(
+        'pins',
+        where: 'id = ?',
+        whereArgs: [pin.id],
+      );
+      final currentPin = Pin.fromMap(currentPinData.first);
+      
+      // Merge new local paths with existing ones
+      final mergedBeforeLocal = _mergeUrls(currentPin.beforePicturesLocal ?? '', beforePhotos);
+      final mergedDuringLocal = _mergeUrls(currentPin.duringPicturesLocal ?? '', duringPhotos);
+      final mergedAfterLocal = _mergeUrls(currentPin.afterPicturesLocal ?? '', afterPhotos);
+      
+      // Merge new URLs with existing ones
+      final mergedBeforeUrls = _mergeUrls(currentPin.beforePicturesUrls ?? '', [beforeUrls ?? '']);
+      final mergedDuringUrls = _mergeUrls(currentPin.duringPicturesUrls ?? '', [duringUrls ?? '']);
+      final mergedAfterUrls = _mergeUrls(currentPin.afterPicturesUrls ?? '', [afterUrls ?? '']);
+      
+      final updatedPin = Pin(
+        id: currentPin.id,
+        planImageId: currentPin.planImageId,
+        x: currentPin.x,
+        y: currentPin.y,
+        title: currentPin.title,
+        description: currentPin.description,
+        assignedTo: currentPin.assignedTo,
+        status: currentPin.status,
+        createdAt: currentPin.createdAt,
+        beforePicturesUrls: mergedBeforeUrls.isNotEmpty ? mergedBeforeUrls : null,
+        duringPicturesUrls: mergedDuringUrls.isNotEmpty ? mergedDuringUrls : null,
+        afterPicturesUrls: mergedAfterUrls.isNotEmpty ? mergedAfterUrls : null,
+        beforePicturesLocal: mergedBeforeLocal.isNotEmpty ? mergedBeforeLocal : null,
+        duringPicturesLocal: mergedDuringLocal.isNotEmpty ? mergedDuringLocal : null,
+        afterPicturesLocal: mergedAfterLocal.isNotEmpty ? mergedAfterLocal : null,
+        baserowId: currentPin.baserowId,
+        syncStatus: currentPin.syncStatus,
+        lastSync: currentPin.lastSync,
+        needsSync: currentPin.needsSync,
+      );
+      
+      await SyncService.updatePinLocally(updatedPin.toMap());
+      await SyncService.performFullSync();
+      print('✅ Sync completed after adding photos');
+      await _loadPins();
+      print('✅ Pins reloaded from database');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${photoCategories.length} photo${photoCategories.length > 1 ? 's' : ''} added to pin')),
+        );
+      }
+    } catch (e) {
+      print('❌ Failed to add photos: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add photos: $e')),
+        );
+      }
+    }
+  }
+  
+  String _mergeUrls(String existing, List<String> newUrls) {
+    final existingList = existing.isEmpty ? <String>[] : existing.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    final newList = newUrls.where((e) => e.isNotEmpty).toList();
+    final merged = [...existingList, ...newList];
+    return merged.join(',');
   }
 
   Color _getPinColor(Pin pin) {
@@ -858,7 +972,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
     }
   }
 
-  void _showFullScreenImage(String imagePath) {
+  void _showFullScreenImage(String imagePath, {bool isUrl = false}) {
     showDialog(
       context: context,
       builder: (context) => Dialog.fullscreen(
@@ -870,22 +984,54 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
               child: InteractiveViewer(
                 minScale: 0.5,
                 maxScale: 3.0,
-                child: Image.file(
-                  File(imagePath),
-                  fit: BoxFit.contain,
-                  width: double.infinity,
-                  height: double.infinity,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      width: double.infinity,
-                      height: double.infinity,
-                      color: Colors.grey[800],
-                      child: const Center(
-                        child: Icon(Icons.image, color: Colors.white, size: 64),
+                child: isUrl
+                    ? Image.network(
+                        imagePath,
+                        fit: BoxFit.contain,
+                        width: double.infinity,
+                        height: double.infinity,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            width: double.infinity,
+                            height: double.infinity,
+                            color: Colors.grey[800],
+                            child: const Center(
+                              child: Icon(Icons.image, color: Colors.white, size: 64),
+                            ),
+                          );
+                        },
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Container(
+                            width: double.infinity,
+                            height: double.infinity,
+                            color: Colors.grey[800],
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                value: loadingProgress.expectedTotalBytes != null
+                                    ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                                    : null,
+                              ),
+                            ),
+                          );
+                        },
+                      )
+                    : Image.file(
+                        File(imagePath),
+                        fit: BoxFit.contain,
+                        width: double.infinity,
+                        height: double.infinity,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            width: double.infinity,
+                            height: double.infinity,
+                            color: Colors.grey[800],
+                            child: const Center(
+                              child: Icon(Icons.image, color: Colors.white, size: 64),
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
               ),
             ),
             // Close button
@@ -1349,7 +1495,7 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
                                           
                                           return categoryPhotos.map((photo) {
                                             return GestureDetector(
-                                              onTap: () => _showFullScreenImage(photo['image_path']),
+                                              onTap: () => _showFullScreenImage(photo['image_path'], isUrl: photo['is_url'] == true),
                                               onLongPress: () => _showPhotoOptionsDialog(pin, photo),
                                               child: Container(
                                                 width: 50,
@@ -1364,16 +1510,40 @@ class _PlanViewerScreenState extends State<PlanViewerScreen> {
                                                 ),
                                                 child: ClipRRect(
                                                   borderRadius: BorderRadius.circular(3),
-                                                  child: Image.file(
-                                                    File(photo['image_path']),
-                                                    fit: BoxFit.cover,
-                                                    errorBuilder: (context, error, stackTrace) {
-                                                      return Container(
-                                                        color: Colors.grey[300],
-                                                        child: const Icon(Icons.image, color: Colors.grey, size: 20),
-                                                      );
-                                                    },
-                                                  ),
+                                                  child: (photo['is_url'] == true)
+                                                      ? Image.network(
+                                                          photo['image_path'],
+                                                          fit: BoxFit.cover,
+                                                          errorBuilder: (context, error, stackTrace) {
+                                                            return Container(
+                                                              color: Colors.grey[300],
+                                                              child: const Icon(Icons.image, color: Colors.grey, size: 20),
+                                                            );
+                                                          },
+                                                          loadingBuilder: (context, child, loadingProgress) {
+                                                            if (loadingProgress == null) return child;
+                                                            return Container(
+                                                              color: Colors.grey[300],
+                                                              child: Center(
+                                                                child: CircularProgressIndicator(
+                                                                  value: loadingProgress.expectedTotalBytes != null
+                                                                      ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                                                                      : null,
+                                                                ),
+                                                              ),
+                                                            );
+                                                          },
+                                                        )
+                                                      : Image.file(
+                                                          File(photo['image_path']),
+                                                          fit: BoxFit.cover,
+                                                          errorBuilder: (context, error, stackTrace) {
+                                                            return Container(
+                                                              color: Colors.grey[300],
+                                                              child: const Icon(Icons.image, color: Colors.grey, size: 20),
+                                                            );
+                                                          },
+                                                        ),
                                                 ),
                                               ),
                                             );

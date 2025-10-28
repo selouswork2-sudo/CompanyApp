@@ -19,7 +19,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 18, // Added job status and user roles
+      version: 21, // Added local photo paths for pins and plans
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -265,6 +265,27 @@ CREATE TABLE IF NOT EXISTS timesheets (
 )
 ''');
     }
+    if (oldVersion < 19) {
+      // Add sync metadata columns to pins table
+      await db.execute('ALTER TABLE pins ADD COLUMN baserow_id INTEGER');
+      await db.execute('ALTER TABLE pins ADD COLUMN sync_status TEXT DEFAULT "pending"');
+      await db.execute('ALTER TABLE pins ADD COLUMN last_sync TEXT');
+      await db.execute('ALTER TABLE pins ADD COLUMN needs_sync INTEGER DEFAULT 1');
+    }
+    if (oldVersion < 20) {
+      // Add photo URL fields to pins table
+      await db.execute('ALTER TABLE pins ADD COLUMN before_pictures_urls TEXT');
+      await db.execute('ALTER TABLE pins ADD COLUMN during_pictures_urls TEXT');
+      await db.execute('ALTER TABLE pins ADD COLUMN after_pictures_urls TEXT');
+    }
+    if (oldVersion < 21) {
+      // Add local photo path fields to pins table
+      await db.execute('ALTER TABLE pins ADD COLUMN before_pictures_local TEXT');
+      await db.execute('ALTER TABLE pins ADD COLUMN during_pictures_local TEXT');
+      await db.execute('ALTER TABLE pins ADD COLUMN after_pictures_local TEXT');
+      // Add local image path to plan_images table
+      await db.execute('ALTER TABLE plan_images ADD COLUMN local_image_path TEXT');
+    }
   }
 
   Future _createDB(Database db, int version) async {
@@ -372,6 +393,7 @@ CREATE TABLE plan_images (
   job_id $intType,
   image_path $textType,
   name $textType,
+  local_image_path TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   baserow_id INTEGER,
@@ -451,6 +473,16 @@ CREATE TABLE pins (
   assigned_to TEXT,
   status TEXT DEFAULT 'Open',
   created_at TEXT NOT NULL,
+  before_pictures_urls TEXT,
+  during_pictures_urls TEXT,
+  after_pictures_urls TEXT,
+  before_pictures_local TEXT,
+  during_pictures_local TEXT,
+  after_pictures_local TEXT,
+  baserow_id INTEGER,
+  sync_status TEXT DEFAULT 'pending',
+  last_sync TEXT,
+  needs_sync INTEGER DEFAULT 1,
   FOREIGN KEY (plan_image_id) REFERENCES plan_images (id) ON DELETE CASCADE
 )
 ''');

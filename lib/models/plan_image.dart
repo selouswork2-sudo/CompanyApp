@@ -1,7 +1,8 @@
 class PlanImage {
   final int? id;
   final int jobId;
-  final String imagePath;
+  final String imagePath; // URL from Baserow
+  final String? localImagePath; // Local file path for fast thumbnail
   final String name;
   final DateTime createdAt;
   final int? baserowId;
@@ -13,6 +14,7 @@ class PlanImage {
     this.id,
     required this.jobId,
     required this.imagePath,
+    this.localImagePath,
     required this.name,
     required this.createdAt,
     this.baserowId,
@@ -26,6 +28,7 @@ class PlanImage {
       'id': id,
       'job_id': jobId,
       'image_path': imagePath,
+      'local_image_path': localImagePath,
       'name': name,
       'created_at': createdAt.toIso8601String(),
       'baserow_id': baserowId,
@@ -40,6 +43,7 @@ class PlanImage {
       id: map['id'] is int ? map['id'] as int? : int.tryParse(map['id']?.toString() ?? ''),
       jobId: map['job_id'] is int ? map['job_id'] as int : int.parse(map['job_id']?.toString() ?? '0'),
       imagePath: map['image_path']?.toString() ?? '',
+      localImagePath: map['local_image_path']?.toString(),
       name: map['name']?.toString() ?? '',
       createdAt: DateTime.parse(map['created_at']?.toString() ?? DateTime.now().toIso8601String()),
       baserowId: map['baserow_id'] is int ? map['baserow_id'] as int? : int.tryParse(map['baserow_id']?.toString() ?? ''),

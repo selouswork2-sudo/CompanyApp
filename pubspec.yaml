@@ -51,6 +51,7 @@ dependencies:
   
   # Device info for session management
   device_info_plus: ^10.1.2
+  http_parser: ^4.1.2
 
 dev_dependencies:
   flutter_test:
